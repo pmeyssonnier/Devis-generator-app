@@ -12,6 +12,9 @@
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
   const APP_VERSION = "2.1.0";
+  // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
+  // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
+  const THEME_KEY = "generateur-devis-theme";
 
   const euro = new Intl.NumberFormat("fr-BE", { style: "currency", currency: "EUR" });
   const number = new Intl.NumberFormat("fr-BE", { maximumFractionDigits: 2 });
@@ -1378,6 +1381,51 @@
     button.addEventListener("click", () => goToView(button.dataset.view));
   });
 
+  /* ------------------------------------------------------------------- theme */
+
+  // Couleur de la barre d'etat mobile : suit le theme resolu, pas seulement le choix.
+  function updateThemeColorMeta(resolvedDark) {
+    const meta = $("#theme-color-meta");
+    if (meta) meta.content = resolvedDark ? "#17201f" : "#0f7c6c";
+  }
+
+  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)");
+
+  // "auto" : rien en localStorage, l'attribut suit prefers-color-scheme via la CSS.
+  function applyTheme(choice) {
+    const theme = ["light", "dark"].includes(choice) ? choice : "auto";
+    if (theme === "auto") {
+      document.documentElement.removeAttribute("data-theme");
+      try {
+        localStorage.removeItem(THEME_KEY);
+      } catch {
+        // Navigation privee stricte : le choix ne survivra pas au rechargement.
+      }
+    } else {
+      document.documentElement.setAttribute("data-theme", theme);
+      try {
+        localStorage.setItem(THEME_KEY, theme);
+      } catch {
+        /* idem */
+      }
+    }
+    document.querySelectorAll(".theme-toggle button").forEach((button) => {
+      button.classList.toggle("active", button.dataset.themeChoice === theme);
+    });
+    updateThemeColorMeta(theme === "dark" || (theme === "auto" && Boolean(prefersDark?.matches)));
+  }
+
+  document.querySelectorAll(".theme-toggle button").forEach((button) => {
+    button.addEventListener("click", () => applyTheme(button.dataset.themeChoice));
+  });
+
+  // Theme systeme change pendant que l'app est ouverte, en mode automatique.
+  prefersDark?.addEventListener?.("change", () => {
+    if (!document.documentElement.getAttribute("data-theme")) {
+      updateThemeColorMeta(prefersDark.matches);
+    }
+  });
+
   $("#materiau-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
@@ -2022,4 +2070,7 @@
   saveState();
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
+  // L'attribut est deja pose par le script en tete de <head> (evite un flash) :
+  // ceci ne fait que synchroniser l'etat visuel des boutons avec ce choix.
+  applyTheme(document.documentElement.getAttribute("data-theme") || "auto");
 })();

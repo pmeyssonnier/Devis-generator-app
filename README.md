@@ -129,6 +129,14 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 `core.js` ne touche pas au DOM, ce qui rend la logique de chiffrage testable hors
 navigateur.
 
+## Thème clair / sombre / automatique
+
+Le sélecteur en bas de la barre latérale choisit entre les trois. « Automatique »
+(par défaut) suit le réglage du système d'exploitation, y compris s'il change pendant
+que l'application est ouverte. Un choix explicite est mémorisé dans une clé de
+`localStorage` séparée de celle des données de chiffrage — jamais touchée par
+« Tout réinitialiser » — et prime sur le système jusqu'à revenir sur « Automatique ».
+
 ## Version
 
 Le numéro affiché en bas de la barre latérale suit `package.json`. L'application
