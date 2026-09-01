@@ -63,11 +63,16 @@ test("une unite de longueur n'est pas compatible avec une unite de surface", () 
 
 /* ------------------------------------------------------------------- calcul */
 
+const SETTINGS = { coutHoraire: 50, fraisGeneraux: 10, fraisChantier: 5, imprevus: 5, marge: 10 };
+const MATERIAUX = [
+  { id: "m1", nom: "Isolant", unite: "m2", prix: 10 },
+  { id: "m2", nom: "Enduit", unite: "kg", prix: 4 },
+  { id: "m3", nom: "Accessoires", unite: "m2", prix: 2.5 },
+];
+
 test("le prix de vente suit la decomposition du cahier des charges", () => {
-  const settings = { coutHoraire: 50, fraisGeneraux: 10, fraisChantier: 5, imprevus: 5, marge: 10 };
-  const ouvrage = { heures: 0.5, quantiteMateriau: 2, materiel: 5 };
-  const materiau = { prix: 10 };
-  const calc = C.calculateOuvrage(ouvrage, settings, materiau);
+  const ouvrage = { heures: 0.5, composants: [{ materiauId: "m1", quantite: 2 }], materiel: 5 };
+  const calc = C.calculateOuvrage(ouvrage, SETTINGS, MATERIAUX);
 
   assert.equal(calc.mainOeuvre, 25);
   assert.equal(calc.matieres, 20);
@@ -78,10 +83,66 @@ test("le prix de vente suit la decomposition du cahier des charges", () => {
   assert.equal(C.roundMoney(calc.vente), 65);
 });
 
-test("un ouvrage sans materiau reste calculable", () => {
-  const calc = C.calculateOuvrage({ heures: 1 }, { coutHoraire: 40, marge: 0 }, undefined);
+test("un ouvrage combine plusieurs fournitures", () => {
+  const ouvrage = {
+    heures: 0.5,
+    materiel: 5,
+    composants: [
+      { materiauId: "m1", quantite: 1 },
+      { materiauId: "m2", quantite: 2 },
+      { materiauId: "m3", quantite: 1 },
+    ],
+  };
+  const calc = C.calculateOuvrage(ouvrage, SETTINGS, MATERIAUX);
+
+  assert.equal(calc.matieres, 20.5, "10 + 8 + 2,5");
+  assert.equal(calc.direct, 50.5);
+  assert.deepEqual(
+    calc.composants.map((composant) => [composant.nom, composant.montant]),
+    [
+      ["Isolant", 10],
+      ["Enduit", 8],
+      ["Accessoires", 2.5],
+    ],
+    "chaque fourniture reste justifiable ligne par ligne",
+  );
+});
+
+test("une bibliotheque enregistree avec un seul materiau reste calculable", () => {
+  const ancien = { heures: 0.5, materiauId: "m1", quantiteMateriau: 2, materiel: 5 };
+  assert.deepEqual(C.composantsOf(ancien), [{ materiauId: "m1", quantite: 2 }]);
+  assert.equal(C.calculateOuvrage(ancien, SETTINGS, MATERIAUX).matieres, 20);
+});
+
+test("un materiau supprime est signale, pas chiffre en silence", () => {
+  const ouvrage = { heures: 1, composants: [{ materiauId: "disparu", quantite: 3 }] };
+  const calc = C.calculateOuvrage(ouvrage, SETTINGS, MATERIAUX);
   assert.equal(calc.matieres, 0);
+  assert.equal(calc.composants[0].introuvable, true);
+});
+
+test("les materiaux se resolvent depuis un tableau, une Map ou une fonction", () => {
+  const ouvrage = { composants: [{ materiauId: "m2", quantite: 3 }] };
+  const attendu = 12;
+  const map = new Map(MATERIAUX.map((materiau) => [materiau.id, materiau]));
+  assert.equal(C.calculateOuvrage(ouvrage, SETTINGS, MATERIAUX).matieres, attendu);
+  assert.equal(C.calculateOuvrage(ouvrage, SETTINGS, map).matieres, attendu);
+  assert.equal(
+    C.calculateOuvrage(ouvrage, SETTINGS, (id) => MATERIAUX.find((materiau) => materiau.id === id)).matieres,
+    attendu,
+  );
+});
+
+test("un ouvrage sans materiau reste calculable", () => {
+  const calc = C.calculateOuvrage({ heures: 1 }, { coutHoraire: 40, marge: 0 }, MATERIAUX);
+  assert.equal(calc.matieres, 0);
+  assert.deepEqual(calc.composants, []);
   assert.equal(calc.vente, 40);
+});
+
+test("un composant sans materiau designe est ecarte", () => {
+  const ouvrage = { composants: [{ materiauId: "", quantite: 5 }, { materiauId: "m1", quantite: 1 }] };
+  assert.deepEqual(C.composantsOf(ouvrage), [{ materiauId: "m1", quantite: 1 }]);
 });
 
 /* -------------------------------------------------------------------- codes */
@@ -306,7 +367,11 @@ test("le catalogue de demarrage est coherent", () => {
 
   const nomsMateriaux = new Set(CATALOG.materiaux.map((m) => m.nom));
   CATALOG.ouvrages.forEach((ouvrage) => {
-    assert.ok(nomsMateriaux.has(ouvrage.materiau), `matériau inconnu : ${ouvrage.materiau}`);
+    assert.ok(ouvrage.composants.length > 0, `ouvrage sans composant : ${ouvrage.ref}`);
+    ouvrage.composants.forEach((composant) => {
+      assert.ok(nomsMateriaux.has(composant.materiau), `matériau inconnu : ${composant.materiau}`);
+      assert.ok(Number(composant.quantite) > 0, `quantité manquante : ${ouvrage.ref}`);
+    });
   });
 
   const refs = CATALOG.ouvrages.map((o) => o.ref);

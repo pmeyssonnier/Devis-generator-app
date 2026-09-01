@@ -25,15 +25,20 @@ disponibles.
 
 ```text
 Main-d'œuvre     heures/unité × coût horaire
-+ Matériaux      quantité/unité × prix du matériau
++ Matériaux      somme des fournitures : quantité/unité × prix du matériau
 + Matériel       forfait par unité
 = Coût direct
 × K              K = 1 + (frais généraux + frais de chantier + imprévus + marge) / 100
 = Prix de vente
 ```
 
-Chaque ouvrage affiche sa décomposition (« Justifier ce prix ») : c'est ce qui permet
-de contrôler un calcul et d'expliquer un montant au client ou au pouvoir adjudicateur.
+Un ouvrage combine autant de fournitures que nécessaire — isolant, enduit, accessoires —
+chacune avec sa quantité par unité d'ouvrage. Le formulaire affiche le coût matière au
+fur et à mesure de la saisie.
+
+Chaque ouvrage affiche sa décomposition (« Justifier ce prix ») : une ligne par
+fourniture, avec sa quantité et son prix. C'est ce qui permet de contrôler un calcul et
+d'expliquer un montant au client ou au pouvoir adjudicateur.
 
 ## Répondre à un marché public
 
@@ -91,9 +96,10 @@ le devis en cours. C'est le seul moyen de transférer la mémoire de chiffrage d
 
 ## Limites connues
 
-- Un ouvrage ne référence qu'un seul matériau, complété par un forfait « matériel et
-  accessoires ». Un ouvrage réel combinant plusieurs fournitures distinctes (isolant +
-  enduit + accessoires) doit être décomposé ou approximé.
+- Le catalogue de départ ne déclare encore qu'une fourniture par ouvrage, et certains de
+  ses matériaux restent des lots groupés (« enduit, treillis et accessoires ») dont le
+  prix n'est pas ventilé. L'application sait les décomposer : c'est un travail de saisie
+  à faire au fil des prix réellement obtenus.
 - Les rendements ne sont pas encore recalés sur les heures réellement prestées : la
   boucle « devis → chantier → correction de la bibliothèque » reste à construire.
 - Les prix des matériaux portent une date, mais aucune alerte de péremption n'est levée.

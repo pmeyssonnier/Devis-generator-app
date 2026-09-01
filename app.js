@@ -131,8 +131,9 @@
         nom,
         unite: ouvrage.unite || "",
         heures: Number(ouvrage.heures) || 0,
-        materiauId: ouvrage.materiauId || "",
-        quantiteMateriau: Number(ouvrage.quantiteMateriau) || 0,
+        // composantsOf relit aussi l'ancien couple materiauId / quantiteMateriau :
+        // les bibliotheques deja enregistrees sont migrees a la lecture.
+        composants: C.composantsOf(ouvrage),
         materiel: Number(ouvrage.materiel) || 0,
         motsCles: C.normalizeKeywords([ouvrage.motsCles, refs.join(", ")]),
       };
@@ -197,8 +198,12 @@
         nom: source.nom,
         unite: source.unite,
         heures: source.heures,
-        materiauId: materialIdByName.get(C.normalizeText(source.materiau)) || "",
-        quantiteMateriau: source.quantiteMateriau,
+        composants: source.composants
+          .map((composant) => ({
+            materiauId: materialIdByName.get(C.normalizeText(composant.materiau)) || "",
+            quantite: composant.quantite,
+          }))
+          .filter((composant) => composant.materiauId),
         materiel: source.materiel,
         motsCles: C.normalizeKeywords([source.motsCles, source.nom, refs.join(", ")]),
       });
@@ -214,7 +219,7 @@
 
   const materialById = (id) => state.materiaux.find((materiau) => materiau.id === id);
   const ouvrageById = (id) => state.ouvrages.find((ouvrage) => ouvrage.id === id);
-  const priceOf = (ouvrage) => C.calculateOuvrage(ouvrage, state.settings, materialById(ouvrage.materiauId));
+  const priceOf = (ouvrage) => C.calculateOuvrage(ouvrage, state.settings, materialById);
 
   /* ---------------------------------------------------------------- notifications */
 
@@ -331,22 +336,46 @@
       : `<p class="empty">Aucun matériau ne correspond à la recherche.</p>`;
   }
 
+  function composantLabel(composant) {
+    if (composant.introuvable) {
+      return `Matériau retiré de la bibliothèque (${number.format(composant.quantite)} par unité)`;
+    }
+    return `${composant.nom} (${number.format(composant.quantite)} ${composant.unite} × ${euro.format(composant.prix)})`;
+  }
+
+  // Resume court d'un ouvrage : « Isolant + Enduit + Accessoires ».
+  function composantsResume(calc) {
+    if (!calc.composants.length) return "aucun matériau";
+    return calc.composants.map((composant) => composant.nom || "matériau retiré").join(" + ");
+  }
+
   // Decomposition du prix : permet de controler et de justifier un montant.
+  // Chaque fourniture apparait sur sa propre ligne, avec sa quantite et son prix.
   function breakdownHtml(ouvrage, calc) {
-    const materiau = materialById(ouvrage.materiauId);
     const lines = [
-      [`Main-d’œuvre (${number.format(calc.heures)} h × ${euro.format(calc.coutHoraire)})`, calc.mainOeuvre],
-      [
-        `Matériaux${materiau ? ` — ${materiau.nom} (${number.format(ouvrage.quantiteMateriau)} ${materiau.unite})` : " — aucun"}`,
-        calc.matieres,
-      ],
-      ["Matériel et accessoires", calc.materiel],
+      { label: `Main-d’œuvre (${number.format(calc.heures)} h × ${euro.format(calc.coutHoraire)})`, value: calc.mainOeuvre },
     ];
+    if (calc.composants.length) {
+      calc.composants.forEach((composant) => {
+        lines.push({ label: composantLabel(composant), value: composant.montant });
+      });
+      if (calc.composants.length > 1) {
+        lines.push({ label: "Total matériaux", value: calc.matieres, cls: "subtotal" });
+      }
+    } else {
+      lines.push({ label: "Matériaux — aucun", value: 0 });
+    }
+    lines.push({ label: "Matériel et accessoires", value: calc.materiel });
     return `<details class="breakdown">
       <summary>Justifier ce prix</summary>
       <table>
         <tbody>
-          ${lines.map(([label, value]) => `<tr><td>${esc(label)}</td><td>${euro.format(value)}</td></tr>`).join("")}
+          ${lines
+            .map(
+              ({ label, value, cls }) =>
+                `<tr${cls ? ` class="${cls}"` : ""}><td>${esc(label)}</td><td>${euro.format(value)}</td></tr>`,
+            )
+            .join("")}
           <tr class="subtotal"><td>Coût direct</td><td>${euro.format(calc.direct)}</td></tr>
           <tr><td>Frais et marge (K = ${calc.coefficientK.toFixed(3).replace(".", ",")})</td><td>${euro.format(calc.fraisMarge)}</td></tr>
           <tr class="total"><td>Prix de vente / ${esc(ouvrage.unite)}</td><td>${euro.format(calc.vente)}</td></tr>
@@ -365,7 +394,7 @@
         ouvrage.nom,
         ouvrage.unite,
         ouvrage.motsCles,
-        materialById(ouvrage.materiauId)?.nom,
+        ouvrage.composants.map((composant) => materialById(composant.materiauId)?.nom || "").join(" "),
       ]),
     );
     $("#ouvrages-count").textContent = `${ouvrages.length} / ${state.ouvrages.length}`;
@@ -374,7 +403,6 @@
       ? ouvrages
           .map((ouvrage) => {
             const calc = priceOf(ouvrage);
-            const materiau = materialById(ouvrage.materiauId);
             return `<article class="record-card">
               <header>
                 <div>
@@ -383,7 +411,7 @@
                 </div>
                 <span class="badge">${euro.format(calc.vente)} / ${esc(ouvrage.unite)}</span>
               </header>
-              <p>${number.format(ouvrage.heures)} h/${esc(ouvrage.unite)} · ${esc(materiau?.nom || "aucun matériau")} · coût direct ${euro.format(
+              <p>${number.format(ouvrage.heures)} h/${esc(ouvrage.unite)} · ${esc(composantsResume(calc))} · coût direct ${euro.format(
                 calc.direct,
               )}</p>
               ${breakdownHtml(ouvrage, calc)}
@@ -418,19 +446,78 @@
       : `<p class="empty">Aucun doublon probable détecté.</p>`;
   }
 
+  let materialOptionsHtml = "";
   function renderMaterialOptions() {
-    const options = [`<option value="">Aucun</option>`]
+    materialOptionsHtml = [`<option value="">Choisir un matériau…</option>`]
       .concat(
         [...state.materiaux]
           .sort((a, b) => a.nom.localeCompare(b.nom, "fr"))
           .map((m) => `<option value="${m.id}">${esc(m.nom)} (${esc(m.unite)})</option>`),
       )
       .join("");
-    document.querySelectorAll('select[name="materiau"]').forEach((select) => {
+    document.querySelectorAll('#ouvrage-composants select[name="composantMateriau"]').forEach((select) => {
       const current = select.value;
-      select.innerHTML = options;
+      select.innerHTML = materialOptionsHtml;
       select.value = current;
     });
+    updateComposantsTotal();
+  }
+
+  /* ------------------------------------------- composants du formulaire ouvrage */
+
+  function composantRowHtml() {
+    return `<div class="composant-row">
+      <select name="composantMateriau" aria-label="Matériau"></select>
+      <input name="composantQuantite" type="number" min="0" step="0.001" placeholder="Qté / unité" aria-label="Quantité par unité d’ouvrage" />
+      <button class="ghost danger" type="button" data-remove-composant aria-label="Retirer ce matériau">✕</button>
+    </div>`;
+  }
+
+  // Une ligne vide reste affichee quand l'ouvrage n'a aucun materiau : le
+  // formulaire est utilisable sans avoir a cliquer d'abord sur « Ajouter ».
+  function setComposantRows(composants) {
+    const container = $("#ouvrage-composants");
+    if (!container) return;
+    const list = composants.length ? composants : [{ materiauId: "", quantite: "" }];
+    container.innerHTML = list.map(() => composantRowHtml()).join("");
+    [...container.querySelectorAll(".composant-row")].forEach((row, index) => {
+      const select = row.querySelector("select");
+      select.innerHTML = materialOptionsHtml;
+      select.value = list[index].materiauId || "";
+      row.querySelector("input").value = list[index].quantite === "" ? "" : list[index].quantite;
+    });
+    updateComposantsTotal();
+  }
+
+  function addComposantRow() {
+    const container = $("#ouvrage-composants");
+    if (!container) return;
+    container.insertAdjacentHTML("beforeend", composantRowHtml());
+    const row = container.lastElementChild;
+    row.querySelector("select").innerHTML = materialOptionsHtml;
+    row.querySelector("select").focus();
+  }
+
+  function readComposantRows() {
+    const container = $("#ouvrage-composants");
+    if (!container) return [];
+    return [...container.querySelectorAll(".composant-row")]
+      .map((row) => ({
+        materiauId: row.querySelector("select").value,
+        quantite: Number(row.querySelector("input").value) || 0,
+      }))
+      .filter((composant) => composant.materiauId);
+  }
+
+  // Sous-total de la saisie : permet de controler le cout matiere sans quitter le formulaire.
+  function updateComposantsTotal() {
+    const cible = $("#ouvrage-composants-total");
+    if (!cible) return;
+    const total = readComposantRows().reduce(
+      (sum, composant) => sum + composant.quantite * (Number(materialById(composant.materiauId)?.prix) || 0),
+      0,
+    );
+    cible.textContent = `${euro.format(total)} de matériaux par unité`;
   }
 
   let ouvrageOptionsHtml = "";
@@ -1000,8 +1087,7 @@
       nom: C.stripLeadingCode(data.nom),
       unite: data.unite.trim(),
       heures: Number(data.heures) || 0,
-      materiauId: data.materiau || "",
-      quantiteMateriau: Number(data.quantiteMateriau) || 0,
+      composants: readComposantRows(),
       materiel: Number(data.materiel) || 0,
       refsMetre: refs,
       motsCles: C.normalizeKeywords([data.motsCles, refs.join(", ")]),
@@ -1015,6 +1101,7 @@
       state.ouvrages.push({ id: uid(), poste: C.nextInternalCode(usedCodes, payload.nom), ...payload });
     }
     event.currentTarget.reset();
+    setComposantRows([]);
     updateEditForms();
     saveState();
     render();
@@ -1093,15 +1180,18 @@
 
     if (data.deleteMateriau) {
       const materiau = materialById(data.deleteMateriau);
-      const used = state.ouvrages.filter((ouvrage) => ouvrage.materiauId === data.deleteMateriau);
+      const used = state.ouvrages.filter((ouvrage) =>
+        ouvrage.composants.some((composant) => composant.materiauId === data.deleteMateriau),
+      );
       const message = used.length
         ? `Supprimer « ${materiau?.nom} » ? ${used.length} ouvrage(s) l’utilisent et perdront leur coût matière.`
         : `Supprimer « ${materiau?.nom} » ?`;
       if (!window.confirm(message)) return;
       state.materiaux = state.materiaux.filter((item) => item.id !== data.deleteMateriau);
       state.ouvrages.forEach((ouvrage) => {
-        if (ouvrage.materiauId === data.deleteMateriau) ouvrage.materiauId = "";
+        ouvrage.composants = ouvrage.composants.filter((composant) => composant.materiauId !== data.deleteMateriau);
       });
+      if (editingOuvrageId) setComposantRows(ouvrageById(editingOuvrageId)?.composants || []);
       if (editingMateriauId === data.deleteMateriau) editingMateriauId = "";
     } else if (data.deleteOuvrage) {
       const ouvrage = ouvrageById(data.deleteOuvrage);
@@ -1147,6 +1237,7 @@
     if (editingOuvrageId === fromId) {
       editingOuvrageId = "";
       $("#ouvrage-form").reset();
+      setComposantRows([]);
     }
     updateEditForms();
     saveState();
@@ -1163,8 +1254,24 @@
   $("#ouvrage-cancel-edit").addEventListener("click", () => {
     editingOuvrageId = "";
     $("#ouvrage-form").reset();
+    setComposantRows([]);
     updateEditForms();
   });
+
+  $("#ouvrage-add-composant").addEventListener("click", addComposantRow);
+
+  $("#ouvrage-composants").addEventListener("click", (event) => {
+    const bouton = event.target.closest("[data-remove-composant]");
+    if (!bouton) return;
+    const rows = $("#ouvrage-composants").querySelectorAll(".composant-row");
+    // La derniere ligne est videe plutot que supprimee : la liste ne disparait jamais.
+    if (rows.length === 1) setComposantRows([]);
+    else bouton.closest(".composant-row").remove();
+    updateComposantsTotal();
+  });
+
+  $("#ouvrage-composants").addEventListener("input", updateComposantsTotal);
+  $("#ouvrage-composants").addEventListener("change", updateComposantsTotal);
 
   $("#devis-line-cancel-edit").addEventListener("click", () => {
     editingDevisLineId = "";
@@ -1192,8 +1299,7 @@
     form.elements.nom.value = ouvrage.nom;
     form.elements.unite.value = ouvrage.unite;
     form.elements.heures.value = ouvrage.heures;
-    form.elements.materiau.value = ouvrage.materiauId;
-    form.elements.quantiteMateriau.value = ouvrage.quantiteMateriau;
+    setComposantRows(ouvrage.composants);
     form.elements.materiel.value = ouvrage.materiel;
     form.elements.motsCles.value = ouvrage.motsCles;
     form.elements.refsMetre.value = ouvrage.refsMetre.join(", ");
@@ -1421,5 +1527,6 @@
   }
   updateEditForms();
   render();
+  setComposantRows([]);
   saveState();
 })();

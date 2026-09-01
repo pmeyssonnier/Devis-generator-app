@@ -803,3 +803,56 @@ tr.row-warning td {
   background: var(--paper);
   color: var(--muted);
 }
+
+/* Liste des fournitures d'un ouvrage : materiau + quantite, autant de lignes que necessaire. */
+.composants-field {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.composants-field legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.composants-field small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#ouvrage-composants {
+  display: grid;
+  gap: 8px;
+}
+
+.composant-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.composant-row button {
+  padding: 8px 0;
+}
+
+.composants-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#ouvrage-composants-total {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
