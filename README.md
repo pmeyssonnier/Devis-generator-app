@@ -13,8 +13,10 @@ le `localStorage` du poste.
 **En ligne :** https://pmeyssonnier.github.io/Devis-generator-app/ — utilisable depuis
 n'importe quel appareil, y compris un téléphone. Sur mobile, « Ajouter à l'écran
 d'accueil » installe une icône propre à l'application, qui s'ouvre en plein écran sans
-la barre d'adresse. Les données restent propres à chaque appareil et à chaque
-navigateur (`localStorage`) : rien n'est synchronisé entre eux.
+la barre d'adresse. Après une première visite en ligne, l'application reste utilisable
+sans connexion (`sw.js`) — sauf l'import/export Excel, qui dépend d'un CDN externe ; le
+CSV et le JSON restent disponibles sans réseau. Les données restent propres à chaque
+appareil et à chaque navigateur (`localStorage`) : rien n'est synchronisé entre eux.
 
 **En local :** ouvrir `index.html` dans un navigateur récent.
 
@@ -121,6 +123,7 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `styles.css` | Mise en forme |
 | `favicon.svg` | Icône de l'onglet du navigateur |
 | `manifest.webmanifest`, `icons/` | Icône d'écran d'accueil (téléphone) et nom affiché en dessous |
+| `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
 | `catalog.js` | Catalogue de départ et codifications connues |
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier, péremption des prix |
 | `app.js` | État, rendu, événements, imports/exports |
