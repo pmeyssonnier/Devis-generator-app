@@ -2073,4 +2073,14 @@
   // L'attribut est deja pose par le script en tete de <head> (evite un flash) :
   // ceci ne fait que synchroniser l'etat visuel des boutons avec ce choix.
   applyTheme(document.documentElement.getAttribute("data-theme") || "auto");
+
+  // Rend l'app disponible hors connexion apres une premiere visite en ligne.
+  // Chemin relatif : indispensable sous le sous-dossier de GitHub Pages.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {
+        // Pas grave : l'app reste utilisable, seulement sans le mode hors ligne.
+      });
+    });
+  }
 })();
