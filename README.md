@@ -64,7 +64,9 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    même codification, ils seront reconnus d'emblée.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, sous-totaux et récapitulatif sont conservés — le
-   pouvoir adjudicateur récupère son propre document, complété.
+   pouvoir adjudicateur récupère son propre document, complété. Chaque complétion
+   repart des données reçues : un rapprochement retiré après une première complétion
+   ne laisse jamais de prix résiduel dans une complétion suivante.
 
 Contrôles effectués avant production du résultat : description manquante, quantité
 absente ou nulle, poste présent plusieurs fois, unité incompatible, poste non chiffrable.

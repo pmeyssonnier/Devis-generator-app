@@ -512,9 +512,15 @@
     const debut = new Date(`${String(datePrix ?? "").trim()}T00:00:00`);
     if (Number.isNaN(debut.getTime())) return null;
     const fin = reference instanceof Date ? reference : new Date(reference);
-    // datePrix est ancre a minuit : arrondir a l'entier inferieur donne le nombre
-    // de jours calendaires ecoules, quelle que soit l'heure de "reference".
-    return Math.floor((fin.getTime() - debut.getTime()) / 86400000);
+    /*
+     * Comparer directement les millisecondes suppose qu'une journee vaut toujours
+     * 86 400 000 ms — faux au passage heure d'ete/hiver (23h ou 25h). On compare
+     * plutot les seules dates civiles (annee/mois/jour locaux), chacune ramenee a
+     * minuit UTC : le nombre de jours entre les deux devient alors exact, quels que
+     * soient les changements d'heure traverses entre les deux dates.
+     */
+    const auxMinuitUtc = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    return Math.floor((auxMinuitUtc(fin) - auxMinuitUtc(debut)) / 86400000);
   }
 
   // seuilJours <= 0 : l'alerte est desactivee, aucun prix n'est jamais signale perime.
@@ -652,13 +658,14 @@
         (ouvrage.refsMetre || []).some((ref) => codes.includes(normalizeRef(ref))),
       );
       if (byCode) {
-        return {
-          ouvrageId: byCode.id,
-          confidence: 1,
-          reason: "code connu",
-          unitWarning: !unitsCompatible(byCode.unite, row.unite),
-          suggestionId: "",
-        };
+        // L'unite est eliminatoire, pas departageante : un code connu dont l'unite ne
+        // correspond plus n'est jamais applique tel quel, seulement suggere. Sans ce
+        // garde-fou, un poste au m pouvait etre chiffre — et exporte — avec un ouvrage
+        // au m2 simplement parce que le code de metre avait ete appris ailleurs.
+        if (!unitsCompatible(byCode.unite, row.unite)) {
+          return { ouvrageId: "", confidence: 1, reason: "", unitWarning: true, suggestionId: byCode.id };
+        }
+        return { ouvrageId: byCode.id, confidence: 1, reason: "code connu", unitWarning: false, suggestionId: "" };
       }
     }
 
