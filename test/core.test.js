@@ -525,6 +525,32 @@ test("le separateur CSV est detecte automatiquement", () => {
   assert.deepEqual(grid[1], ["01.01", "Piquage", "m2", "160"]);
 });
 
+test("un separateur a l'interieur de guillemets ne coupe pas le champ", () => {
+  const grid = C.parseDelimited('Poste;Désignation;U;Qté\n01.01;"Enduit, préparation comprise";m2;160');
+  assert.deepEqual(grid[1], ["01.01", "Enduit, préparation comprise", "m2", "160"]);
+});
+
+test("meme avec la virgule comme separateur, une virgule entre guillemets reste dans le champ", () => {
+  const grid = C.parseDelimited('Poste,Désignation,U,Qté\n01.01,"Enduit, préparation comprise",m2,160');
+  assert.deepEqual(grid[1], ["01.01", "Enduit, préparation comprise", "m2", "160"]);
+});
+
+test("des guillemets doubles a l'interieur d'un champ deviennent un guillemet litteral", () => {
+  const grid = C.parseDelimited('Poste;Désignation\n01.01;"Dit ""le grand"" portail"');
+  assert.deepEqual(grid[1], ["01.01", 'Dit "le grand" portail']);
+});
+
+test("un champ entre guillemets peut contenir un retour a la ligne", () => {
+  const grid = C.parseDelimited('Poste;Désignation;U\n01.01;"Enduit\nsur deux couches";m2');
+  assert.deepEqual(grid[1], ["01.01", "Enduit\nsur deux couches", "m2"]);
+  assert.equal(grid.length, 2, "le retour a la ligne du champ ne cree pas de ligne supplementaire");
+});
+
+test("les lignes entierement vides sont ecartees", () => {
+  const grid = C.parseDelimited("Poste;Désignation\n01.01;Piquage\n\n02.01;Maçonnerie\n");
+  assert.equal(grid.length, 3);
+});
+
 /* ------------------------------------------------------------------ catalogue */
 
 test("le catalogue de demarrage est coherent", () => {

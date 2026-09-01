@@ -1720,8 +1720,19 @@
       const used = state.ouvrages.filter((ouvrage) =>
         ouvrage.composants.some((composant) => composant.materiauId === data.deleteMateriau),
       );
-      const message = used.length
-        ? `Supprimer « ${materiau?.nom} » ? ${used.length} ouvrage(s) l’utilisent et perdront leur coût matière.`
+      // Les achats de chantier deja enregistres ne sont pas modifies : ils gardent la
+      // reference et s'affichent comme « materiau supprime » (cf. renderChantierDetail).
+      // C'est juste porte a la connaissance de l'utilisateur avant qu'il supprime.
+      const achats = state.chantiers.reduce(
+        (total, chantier) => total + chantier.achats.filter((achat) => achat.materiauId === data.deleteMateriau).length,
+        0,
+      );
+      const avertissements = [
+        used.length ? `${used.length} ouvrage(s) l’utilisent et perdront leur coût matière` : "",
+        achats ? `${achats} achat(s) de chantier y font référence et deviendront non identifiables` : "",
+      ].filter(Boolean);
+      const message = avertissements.length
+        ? `Supprimer « ${materiau?.nom} » ? ${avertissements.join(" ; ")}.`
         : `Supprimer « ${materiau?.nom} » ?`;
       if (!window.confirm(message)) return;
       state.materiaux = state.materiaux.filter((item) => item.id !== data.deleteMateriau);
@@ -1732,8 +1743,21 @@
       if (editingMateriauId === data.deleteMateriau) editingMateriauId = "";
     } else if (data.deleteOuvrage) {
       const ouvrage = ouvrageById(data.deleteOuvrage);
-      const used = state.devis.lignes.filter((ligne) => ligne.ouvrageId === data.deleteOuvrage).length;
-      if (!window.confirm(`Supprimer « ${ouvrage?.nom} » ?${used ? ` ${used} ligne(s) de devis y font référence.` : ""}`)) return;
+      const usedDevis = state.devis.lignes.filter((ligne) => ligne.ouvrageId === data.deleteOuvrage).length;
+      // Meme principe que pour un materiau : le releve de chantier n'est pas modifie,
+      // seulement signale avant suppression (il s'affichera « ouvrage supprimé »).
+      const usedChantiers = state.chantiers.reduce(
+        (total, chantier) => total + chantier.mainOeuvre.filter((releve) => releve.ouvrageId === data.deleteOuvrage).length,
+        0,
+      );
+      const avertissements = [
+        usedDevis ? `${usedDevis} ligne(s) de devis` : "",
+        usedChantiers ? `${usedChantiers} relevé(s) de chantier` : "",
+      ].filter(Boolean);
+      const message = avertissements.length
+        ? `Supprimer « ${ouvrage?.nom} » ? ${avertissements.join(" et ")} y font référence.`
+        : `Supprimer « ${ouvrage?.nom} » ?`;
+      if (!window.confirm(message)) return;
       state.ouvrages = state.ouvrages.filter((item) => item.id !== data.deleteOuvrage);
       state.metre.analysed.forEach((row) => {
         if (row.ouvrageId === data.deleteOuvrage) row.ouvrageId = "";
@@ -1758,7 +1782,7 @@
     if (!source || !target || fromId === toId) return;
     const confirmed = window.confirm(
       `Fusionner « ${source.poste} — ${source.nom} » dans « ${target.poste} — ${target.nom} » ?\n\n` +
-        "Les lignes de devis, les correspondances de métré et les codes appris seront transférés.",
+        "Les lignes de devis, les correspondances de métré, les relevés de chantier et les codes appris seront transférés.",
     );
     if (!confirmed) return;
 
@@ -1769,6 +1793,13 @@
     });
     state.metre.analysed.forEach((row) => {
       if (row.ouvrageId === fromId) row.ouvrageId = toId;
+    });
+    // Sans ce transfert, l'historique de chantier de l'ouvrage fusionné ne recale
+    // plus jamais rien : il reste attache a un id qui n'existe plus apres la fusion.
+    state.chantiers.forEach((chantier) => {
+      chantier.mainOeuvre.forEach((releve) => {
+        if (releve.ouvrageId === fromId) releve.ouvrageId = toId;
+      });
     });
     state.ouvrages = state.ouvrages.filter((ouvrage) => ouvrage.id !== fromId);
     if (editingOuvrageId === fromId) {
