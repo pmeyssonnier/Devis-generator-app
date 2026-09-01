@@ -125,6 +125,13 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 `core.js` ne touche pas au DOM, ce qui rend la logique de chiffrage testable hors
 navigateur.
 
+## Version
+
+Le numéro affiché en bas de la barre latérale suit `package.json`. L'application
+n'ayant pas d'outil de build, les deux sont à mettre à jour à la main ensemble
+(`APP_VERSION` dans `app.js`) — utile surtout pour confirmer, une fois déployée sur
+GitHub Pages, que le navigateur affiche bien la dernière version.
+
 ## Tests
 
 ```bash

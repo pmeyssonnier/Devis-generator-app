@@ -9,6 +9,9 @@
   const CATALOG = globalThis.DGCatalog;
   const STORAGE_KEY = "generateur-devis-v2";
   const CATALOG_VERSION = 1;
+  // Tenir a jour avec le champ "version" de package.json — aucun outil de build
+  // ne relie les deux, donc c'est manuel.
+  const APP_VERSION = "2.1.0";
 
   const euro = new Intl.NumberFormat("fr-BE", { style: "currency", currency: "EUR" });
   const number = new Intl.NumberFormat("fr-BE", { maximumFractionDigits: 2 });
@@ -2017,4 +2020,6 @@
   render();
   setComposantRows([]);
   saveState();
+  const versionEl = $("#app-version");
+  if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
 })();
