@@ -13,6 +13,8 @@
   const euro = new Intl.NumberFormat("fr-BE", { style: "currency", currency: "EUR" });
   const number = new Intl.NumberFormat("fr-BE", { maximumFractionDigits: 2 });
   const percent = new Intl.NumberFormat("fr-BE", { maximumFractionDigits: 0, style: "percent" });
+  // Un rendement se lit a la quatrieme decimale : 0,08 h/m2 n'est pas 0,1 h/m2.
+  const rendementNf = new Intl.NumberFormat("fr-BE", { maximumFractionDigits: 4 });
 
   const VIEW_LABELS = {
     dashboard: "Tableau de bord",
@@ -20,6 +22,7 @@
     materiaux: "Matériaux",
     devis: "Devis client",
     metre: "Métré public",
+    chantiers: "Chantiers",
     settings: "Paramètres",
   };
 
@@ -32,6 +35,8 @@
   let editingOuvrageId = "";
   let editingDevisMeta = false;
   let editingDevisLineId = "";
+  let editingChantierId = "";
+  let selectedChantierId = "";
   let storageWarningShown = false;
 
   const $ = (selector) => document.querySelector(selector);
@@ -56,6 +61,7 @@
       materiaux: [],
       ouvrages: [],
       devis: { ...CATALOG.defaultDevis, lignes: [] },
+      chantiers: [],
       metre: emptyMetre(),
     };
   }
@@ -152,6 +158,27 @@
       })),
     };
 
+    // Releves de chantier : ce qui a reellement ete preste et achete.
+    next.chantiers = (source.chantiers || []).map((chantier) => ({
+      id: chantier.id || uid(),
+      nom: chantier.nom || "",
+      reference: chantier.reference || "",
+      date: chantier.date || "",
+      mainOeuvre: (chantier.mainOeuvre || []).map((releve) => ({
+        id: releve.id || uid(),
+        ouvrageId: releve.ouvrageId || "",
+        quantite: Number(releve.quantite) || 0,
+        personnes: Number(releve.personnes) || 1,
+        duree: Number(releve.duree) || 0,
+      })),
+      achats: (chantier.achats || []).map((achat) => ({
+        id: achat.id || uid(),
+        materiauId: achat.materiauId || "",
+        quantite: Number(achat.quantite) || 0,
+        montant: Number(achat.montant) || 0,
+      })),
+    }));
+
     next.metre = { ...emptyMetre(), ...(source.metre || {}) };
     next.metre.analysed = (next.metre.analysed || []).map((row) => ({ ...row, poste: row.poste || row.numero }));
     if (![6, 21].includes(Number(next.settings.tva))) next.settings.tva = 21;
@@ -219,6 +246,10 @@
 
   const materialById = (id) => state.materiaux.find((materiau) => materiau.id === id);
   const ouvrageById = (id) => state.ouvrages.find((ouvrage) => ouvrage.id === id);
+  const chantierById = (id) => state.chantiers.find((chantier) => chantier.id === id);
+  const chantiersTries = () => [...state.chantiers].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  // A defaut de selection, le chantier le plus recent : c'est celui qu'on releve.
+  const chantierCourant = () => chantierById(selectedChantierId) || chantiersTries()[0] || null;
   const priceOf = (ouvrage) => C.calculateOuvrage(ouvrage, state.settings, materialById);
 
   /* ---------------------------------------------------------------- notifications */
@@ -245,6 +276,7 @@
     renderSettings();
     renderDevis();
     renderMetre();
+    renderChantiers();
   }
 
   function formatPercent(value) {
@@ -258,6 +290,7 @@
     $("#kpi-k").textContent = C.coefficientK(state.settings).toFixed(3).replace(".", ",");
     $("#kpi-devis").textContent = euro.format(totals.ht);
     $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId).length;
+    $("#kpi-recalage").textContent = recalagesRendement().filter(aRecaler).length + recalagesPrix().filter(aRecaler).length;
   }
 
   function renderDashboard() {
@@ -455,11 +488,13 @@
           .map((m) => `<option value="${m.id}">${esc(m.nom)} (${esc(m.unite)})</option>`),
       )
       .join("");
-    document.querySelectorAll('#ouvrage-composants select[name="composantMateriau"]').forEach((select) => {
-      const current = select.value;
-      select.innerHTML = materialOptionsHtml;
-      select.value = current;
-    });
+    document
+      .querySelectorAll('#ouvrage-composants select[name="composantMateriau"], #achat-form select[name="materiau"]')
+      .forEach((select) => {
+        const current = select.value;
+        select.innerHTML = materialOptionsHtml;
+        select.value = current;
+      });
     updateComposantsTotal();
   }
 
@@ -641,6 +676,247 @@
   function updateDevisLineMode() {
     $("#devis-line-submit").textContent = editingDevisLineId ? "Sauvegarder la ligne" : "Ajouter";
     $("#devis-line-cancel-edit").classList.toggle("hidden", !editingDevisLineId);
+  }
+
+  /* ----------------------------------------------------------------- chantiers */
+
+  /*
+   * La boucle « devis -> chantier -> correction de la bibliotheque ».
+   *
+   * Un chantier porte deux releves : les heures reellement prestees par ouvrage et
+   * les achats reellement factures. Rien n'est corrige automatiquement : l'ecart est
+   * affiche, et l'entreprise decide de recaler ou non sa bibliotheque.
+   */
+
+  // En deca, l'ecart tient du bruit de chantier : on ne le signale pas comme a corriger.
+  const SEUIL_RECALAGE = 0.05;
+
+  function formatEcart(ecart) {
+    if (ecart === null) return "—";
+    return `${ecart > 0 ? "+" : ""}${percent.format(ecart)}`;
+  }
+
+  // Un ecart sous le seuil ne merite pas d'etre colorie.
+  function classeEcart(ecart) {
+    if (ecart === null || Math.abs(ecart) < SEUIL_RECALAGE) return "";
+    return ecart > 0 ? "ecart-hausse" : "ecart-baisse";
+  }
+
+  function attrClasse(classe) {
+    return classe ? ` class="${classe}"` : "";
+  }
+
+  function aRecaler(item) {
+    return item.ecart === null || Math.abs(item.ecart) >= SEUIL_RECALAGE;
+  }
+
+  // Rendements observes sur l'ensemble des chantiers, rapportes aux ouvrages existants.
+  function recalagesRendement() {
+    const observations = C.observerRendements(state.chantiers);
+    return state.ouvrages
+      .filter((ouvrage) => observations.has(ouvrage.id))
+      .map((ouvrage) => {
+        const observation = observations.get(ouvrage.id);
+        const rendement = C.roundHeures(observation.rendement);
+        return { ouvrage, observation, rendement, ecart: C.ecartRelatif(ouvrage.heures, rendement) };
+      })
+      .filter((item) => item.rendement !== item.ouvrage.heures)
+      .sort((a, b) => Math.abs(b.ecart ?? 1) - Math.abs(a.ecart ?? 1));
+  }
+
+  function recalagesPrix() {
+    const observations = C.observerPrixMateriaux(state.chantiers);
+    return state.materiaux
+      .filter((materiau) => observations.has(materiau.id))
+      .map((materiau) => {
+        const observation = observations.get(materiau.id);
+        const prix = C.roundMoney(observation.prix);
+        return { materiau, observation, prix, ecart: C.ecartRelatif(materiau.prix, prix) };
+      })
+      .filter((item) => item.prix !== item.materiau.prix)
+      .sort((a, b) => Math.abs(b.ecart ?? 1) - Math.abs(a.ecart ?? 1));
+  }
+
+  function renderChantiers() {
+    renderChantiersList();
+    renderChantierDetail();
+    renderRecalage();
+  }
+
+  function renderChantiersList() {
+    const courant = chantierCourant();
+    $("#chantiers-count").textContent = `${state.chantiers.length}`;
+    $("#chantiers-list").innerHTML = state.chantiers.length
+      ? chantiersTries()
+          .map((chantier) => {
+            const heures = chantier.mainOeuvre.reduce((total, releve) => total + C.heuresReleve(releve), 0);
+            const achats = chantier.achats.reduce((total, achat) => total + achat.montant, 0);
+            return `<article class="record-card ${chantier.id === courant?.id ? "selected" : ""}">
+              <header>
+                <div>
+                  <strong>${esc(chantier.nom || "Chantier sans nom")}</strong>
+                  <small>${esc(chantier.reference || "sans référence")}${chantier.date ? ` · ${esc(chantier.date)}` : ""}</small>
+                </div>
+                <span class="badge">${number.format(heures)} h</span>
+              </header>
+              <p>${chantier.mainOeuvre.length} poste(s) relevé(s) · ${euro.format(achats)} d’achats</p>
+              <div class="card-actions">
+                <button class="edit-button" data-select-chantier="${chantier.id}" type="button">Relever</button>
+                <button class="edit-button" data-edit-chantier="${chantier.id}" type="button">Éditer</button>
+                <button class="delete-button" data-delete-chantier="${chantier.id}" type="button">Supprimer</button>
+              </div>
+            </article>`;
+          })
+          .join("")
+      : `<p class="empty">Aucun chantier relevé.</p>`;
+  }
+
+  function renderChantierDetail() {
+    const chantier = chantierCourant();
+    $("#chantier-empty").classList.toggle("hidden", Boolean(chantier));
+    $("#chantier-detail-body").classList.toggle("hidden", !chantier);
+    if (!chantier) {
+      $("#chantier-detail-title").textContent = "Relevé de chantier";
+      $("#chantier-detail-sub").textContent = "";
+      return;
+    }
+
+    $("#chantier-detail-title").textContent = chantier.nom || "Chantier sans nom";
+    $("#chantier-detail-sub").textContent = [chantier.reference, chantier.date].filter(Boolean).join(" · ");
+
+    const bilan = C.bilanChantier(chantier, state.ouvrages, state.materiaux, state.settings);
+
+    $("#releve-lines").innerHTML = bilan.lignes.length
+      ? bilan.lignes
+          .map((ligne) => {
+            const unite = ligne.ouvrage?.unite || "";
+            const nom = ligne.ouvrage
+              ? esc(ligne.ouvrage.nom)
+              : `<em>ouvrage supprimé</em>`;
+            return `<tr>
+              <td>${nom}</td>
+              <td><input class="cell-input" type="number" min="0" step="0.01" value="${ligne.quantite}" data-releve="${ligne.releveId}" data-champ="quantite" aria-label="Quantité réalisée" /> ${esc(unite)}</td>
+              <td><input class="cell-input" type="number" min="1" step="1" value="${ligne.personnes}" data-releve="${ligne.releveId}" data-champ="personnes" aria-label="Personnes" /></td>
+              <td><input class="cell-input" type="number" min="0" step="0.25" value="${ligne.duree}" data-releve="${ligne.releveId}" data-champ="duree" aria-label="Heures" /> = ${number.format(ligne.heures)} h</td>
+              <td>${rendementNf.format(ligne.rendementPrevu)} → <strong>${rendementNf.format(ligne.rendementReel)}</strong> h/${esc(unite)}</td>
+              <td${attrClasse(classeEcart(ligne.ecart))}>${formatEcart(ligne.ecart)}</td>
+              <td><button class="delete-button" data-delete-releve="${ligne.releveId}" type="button">Retirer</button></td>
+            </tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="7" class="empty">Aucune heure relevée.</td></tr>`;
+
+    $("#achat-lines").innerHTML = bilan.achats.length
+      ? bilan.achats
+          .map((achat) => {
+            const unite = achat.materiau?.unite || "";
+            const nom = achat.materiau ? esc(achat.materiau.nom) : `<em>matériau supprimé</em>`;
+            return `<tr>
+              <td>${nom}</td>
+              <td><input class="cell-input" type="number" min="0" step="0.01" value="${achat.quantite}" data-achat="${achat.achatId}" data-champ="quantite" aria-label="Quantité facturée" /> ${esc(unite)}</td>
+              <td><input class="cell-input" type="number" min="0" step="0.01" value="${achat.montant}" data-achat="${achat.achatId}" data-champ="montant" aria-label="Montant payé" /> €</td>
+              <td><strong>${euro.format(achat.prix)}</strong></td>
+              <td>${euro.format(achat.prixBibliotheque)}</td>
+              <td${attrClasse(classeEcart(achat.ecart))}>${formatEcart(achat.ecart)}</td>
+              <td><button class="delete-button" data-delete-achat="${achat.achatId}" type="button">Retirer</button></td>
+            </tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="7" class="empty">Aucun achat relevé.</td></tr>`;
+
+    const orphelins = bilan.lignes.filter((ligne) => !ligne.ouvrage).length;
+    $("#chantier-warning").textContent = [
+      bilan.achatsManquants ? "Aucun achat relevé : la marge réelle ne tient pas compte des matières." : "",
+      orphelins ? `${orphelins} relevé(s) rattaché(s) à un ouvrage supprimé : ils ne recalent plus rien.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const ecartClasse = classeEcart(C.ecartRelatif(bilan.prevu.direct, bilan.reel.direct));
+    $("#chantier-bilan").innerHTML = [
+      ["Recette HTVA", euro.format(bilan.recette), ""],
+      ["Heures prévues → prestées", `${number.format(bilan.prevu.heures)} → ${number.format(bilan.reel.heures)} h`, ""],
+      ["Coût direct prévu", euro.format(bilan.prevu.direct), ""],
+      ["Coût direct réel", euro.format(bilan.reel.direct), ecartClasse],
+      ["Marge prévue", euro.format(bilan.margePrevue), ""],
+      ["Marge réelle", euro.format(bilan.margeReelle), bilan.margeReelle < bilan.margePrevue ? "ecart-hausse" : ""],
+    ]
+      .map(([label, valeur, classe]) => `<div><span>${esc(label)}</span><strong${attrClasse(classe)}>${esc(valeur)}</strong></div>`)
+      .join("");
+  }
+
+  function renderRecalage() {
+    const rendements = recalagesRendement();
+    const prix = recalagesPrix();
+    const vide = !state.chantiers.length;
+    $("#recalage-empty").classList.toggle("hidden", !vide);
+    $("#recalage-body").classList.toggle("hidden", vide);
+    if (vide) return;
+
+    $("#recalage-rendements").innerHTML = rendements.length
+      ? rendements
+          .map(({ ouvrage, observation, rendement: observe, ecart }) => {
+            const venteActuelle = priceOf(ouvrage).vente;
+            const venteRecalee = C.calculateOuvrage({ ...ouvrage, heures: observe }, state.settings, materialById).vente;
+            return `<tr>
+              <td><strong>${esc(ouvrage.nom)}</strong><small>${esc(ouvrage.poste)}</small></td>
+              <td>${rendementNf.format(ouvrage.heures)} h/${esc(ouvrage.unite)}</td>
+              <td><strong>${rendementNf.format(observe)}</strong> h/${esc(ouvrage.unite)}</td>
+              <td${attrClasse(classeEcart(ecart))}>${formatEcart(ecart)}</td>
+              <td>${number.format(observation.quantite)} ${esc(ouvrage.unite)} · ${observation.chantiers} chantier(s)</td>
+              <td>${euro.format(venteActuelle)} → ${euro.format(venteRecalee)}</td>
+              <td><button class="edit-button" data-recaler-ouvrage="${ouvrage.id}" type="button">Recaler</button></td>
+            </tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="7" class="empty">Les rendements de la bibliothèque correspondent aux relevés.</td></tr>`;
+
+    $("#recalage-prix").innerHTML = prix.length
+      ? prix
+          .map(({ materiau, observation, prix: paye, ecart }) => `<tr>
+              <td><strong>${esc(materiau.nom)}</strong><small>${esc(materiau.fournisseur || "sans fournisseur")}</small></td>
+              <td>${euro.format(materiau.prix)} / ${esc(materiau.unite)}</td>
+              <td><strong>${euro.format(paye)}</strong> / ${esc(materiau.unite)}</td>
+              <td${attrClasse(classeEcart(ecart))}>${formatEcart(ecart)}</td>
+              <td>${number.format(observation.quantite)} ${esc(materiau.unite)} · ${observation.chantiers} chantier(s)</td>
+              <td><button class="edit-button" data-recaler-materiau="${materiau.id}" type="button">Recaler</button></td>
+            </tr>`)
+          .join("")
+      : `<tr><td colspan="6" class="empty">Les prix de la bibliothèque correspondent aux factures.</td></tr>`;
+
+    $("#recaler-tous-rendements").disabled = !rendements.length;
+    $("#recaler-tous-prix").disabled = !prix.length;
+  }
+
+  // Recalage : la bibliotheque prend la valeur observee, et la date qui va avec.
+  function recalerOuvrage(ouvrageId) {
+    const item = recalagesRendement().find((candidat) => candidat.ouvrage.id === ouvrageId);
+    if (!item) return false;
+    item.ouvrage.heures = item.rendement;
+    return true;
+  }
+
+  function recalerMateriau(materiauId) {
+    const item = recalagesPrix().find((candidat) => candidat.materiau.id === materiauId);
+    if (!item) return false;
+    item.materiau.prix = item.prix;
+    if (item.observation.date) item.materiau.datePrix = item.observation.date;
+    return true;
+  }
+
+  function updateChantierForm() {
+    $("#chantier-form-title").textContent = editingChantierId ? "Modifier le chantier" : "Ajouter un chantier";
+    $("#chantier-submit").textContent = editingChantierId ? "Sauvegarder" : "Enregistrer le chantier";
+    $("#chantier-cancel-edit").classList.toggle("hidden", !editingChantierId);
+  }
+
+  function resetChantierForm() {
+    const form = $("#chantier-form");
+    form.reset();
+    // Un releve porte presque toujours sur le jour meme.
+    form.elements.date.value = new Date().toISOString().slice(0, 10);
+    editingChantierId = "";
+    updateChantierForm();
   }
 
   /* --------------------------------------------------------------------- metre */
@@ -1165,6 +1441,165 @@
     render();
   });
 
+  /* ----------------------------------------------------------------- chantiers */
+
+  $("#chantier-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const payload = { nom: data.nom.trim(), reference: data.reference.trim(), date: data.date || "" };
+    if (editingChantierId) {
+      const chantier = chantierById(editingChantierId);
+      if (chantier) Object.assign(chantier, payload);
+      selectedChantierId = editingChantierId;
+    } else {
+      const chantier = { id: uid(), ...payload, mainOeuvre: [], achats: [] };
+      state.chantiers.push(chantier);
+      selectedChantierId = chantier.id;
+    }
+    resetChantierForm();
+    saveState();
+    render();
+    notify("Chantier enregistré.", "info");
+  });
+
+  $("#chantier-cancel-edit").addEventListener("click", resetChantierForm);
+
+  $("#releve-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const chantier = chantierCourant();
+    if (!chantier) return;
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    if (!data.ouvrage) {
+      notify("Sélectionnez un ouvrage.", "danger");
+      return;
+    }
+    chantier.mainOeuvre.push({
+      id: uid(),
+      ouvrageId: data.ouvrage,
+      quantite: Number(data.quantite) || 0,
+      personnes: Number(data.personnes) || 1,
+      duree: Number(data.duree) || 0,
+    });
+    event.currentTarget.reset();
+    selectedChantierId = chantier.id;
+    saveState();
+    render();
+  });
+
+  $("#achat-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const chantier = chantierCourant();
+    if (!chantier) return;
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    if (!data.materiau) {
+      notify("Sélectionnez un matériau.", "danger");
+      return;
+    }
+    chantier.achats.push({
+      id: uid(),
+      materiauId: data.materiau,
+      quantite: Number(data.quantite) || 0,
+      montant: Number(data.montant) || 0,
+    });
+    event.currentTarget.reset();
+    selectedChantierId = chantier.id;
+    saveState();
+    render();
+  });
+
+  function startChantierEdit(id) {
+    const chantier = chantierById(id);
+    if (!chantier) return;
+    editingChantierId = id;
+    selectedChantierId = id;
+    const form = $("#chantier-form");
+    form.elements.nom.value = chantier.nom;
+    form.elements.reference.value = chantier.reference;
+    form.elements.date.value = chantier.date;
+    updateChantierForm();
+    render();
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  $("#chantiers").addEventListener("click", (event) => {
+    const bouton = event.target.closest("button");
+    if (!bouton) return;
+    const data = bouton.dataset;
+
+    if (data.editChantier) return startChantierEdit(data.editChantier);
+
+    if (data.selectChantier) {
+      selectedChantierId = data.selectChantier;
+    } else if (data.deleteChantier) {
+      const chantier = chantierById(data.deleteChantier);
+      if (!window.confirm(`Supprimer le relevé du chantier « ${chantier?.nom} » ? Les corrections déjà appliquées à la bibliothèque sont conservées.`)) return;
+      state.chantiers = state.chantiers.filter((item) => item.id !== data.deleteChantier);
+      if (selectedChantierId === data.deleteChantier) selectedChantierId = "";
+      if (editingChantierId === data.deleteChantier) resetChantierForm();
+    } else if (data.deleteReleve) {
+      const chantier = chantierCourant();
+      if (!chantier) return;
+      chantier.mainOeuvre = chantier.mainOeuvre.filter((releve) => releve.id !== data.deleteReleve);
+    } else if (data.deleteAchat) {
+      const chantier = chantierCourant();
+      if (!chantier) return;
+      chantier.achats = chantier.achats.filter((achat) => achat.id !== data.deleteAchat);
+    } else if (data.recalerOuvrage) {
+      if (!recalerOuvrage(data.recalerOuvrage)) return;
+      notify("Rendement recalé sur les heures relevées.", "info");
+    } else if (data.recalerMateriau) {
+      if (!recalerMateriau(data.recalerMateriau)) return;
+      notify("Prix recalé sur les factures relevées.", "info");
+    } else {
+      return;
+    }
+
+    saveState();
+    render();
+  });
+
+  // Correction d'un releve saisi de travers, directement dans le tableau.
+  $("#chantiers").addEventListener("change", (event) => {
+    const champ = event.target.dataset.champ;
+    if (!champ) return;
+    const chantier = chantierCourant();
+    if (!chantier) return;
+    const valeur = Math.max(0, Number(event.target.value) || 0);
+    if (event.target.dataset.releve) {
+      const releve = chantier.mainOeuvre.find((item) => item.id === event.target.dataset.releve);
+      if (!releve) return;
+      releve[champ] = champ === "personnes" ? Math.max(1, Math.round(valeur)) : valeur;
+    } else if (event.target.dataset.achat) {
+      const achat = chantier.achats.find((item) => item.id === event.target.dataset.achat);
+      if (!achat) return;
+      achat[champ] = valeur;
+    } else {
+      return;
+    }
+    saveState();
+    render();
+  });
+
+  $("#recaler-tous-rendements").addEventListener("click", () => {
+    const items = recalagesRendement();
+    if (!items.length) return;
+    if (!window.confirm(`Recaler ${items.length} rendement(s) sur les heures réellement prestées ?`)) return;
+    items.forEach((item) => recalerOuvrage(item.ouvrage.id));
+    saveState();
+    render();
+    notify(`${items.length} rendement(s) recalé(s).`, "info");
+  });
+
+  $("#recaler-tous-prix").addEventListener("click", () => {
+    const items = recalagesPrix();
+    if (!items.length) return;
+    if (!window.confirm(`Recaler ${items.length} prix sur les montants réellement facturés ?`)) return;
+    items.forEach((item) => recalerMateriau(item.materiau.id));
+    saveState();
+    render();
+    notify(`${items.length} prix recalé(s).`, "info");
+  });
+
   $("#ouvrage-search").addEventListener("input", renderOuvrages);
   $("#materiau-search").addEventListener("input", renderMateriaux);
 
@@ -1526,6 +1961,7 @@
     });
   }
   updateEditForms();
+  resetChantierForm();
   render();
   setComposantRows([]);
   saveState();

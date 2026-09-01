@@ -26,6 +26,7 @@
           <button class="nav-item" data-view="materiaux" type="button">Matériaux</button>
           <button class="nav-item" data-view="devis" type="button">Devis client</button>
           <button class="nav-item" data-view="metre" type="button">Métré public</button>
+          <button class="nav-item" data-view="chantiers" type="button">Chantiers</button>
           <button class="nav-item" data-view="settings" type="button">Paramètres</button>
         </nav>
       </aside>
@@ -57,6 +58,7 @@
             <article><span>Coefficient K</span><strong id="kpi-k">1,000</strong></article>
             <article><span>Devis en cours HTVA</span><strong id="kpi-devis">0,00 €</strong></article>
             <article><span>Postes non reconnus</span><strong id="kpi-alertes">0</strong></article>
+            <article><span>Corrections en attente</span><strong id="kpi-recalage">0</strong></article>
           </div>
           <div class="split">
             <section class="panel">
@@ -166,6 +168,148 @@
               <div id="materiaux-list" class="cards-list"></div>
             </section>
           </div>
+        </section>
+
+        <!-- Chantiers ------------------------------------------------------- -->
+        <section class="view" id="chantiers">
+          <div class="editor-grid">
+            <div class="chantier-column">
+              <form class="panel form-panel" id="chantier-form">
+                <div class="panel-head">
+                  <h2 id="chantier-form-title">Ajouter un chantier</h2>
+                </div>
+                <label>Nom<input name="nom" required placeholder="Rénovation rue de la Station" /></label>
+                <label>Référence<input name="reference" placeholder="2026-014" /></label>
+                <label>Date<input name="date" type="date" />
+                  <small>Date du relevé : elle datera les prix matériaux recalés.</small>
+                </label>
+                <div class="form-actions">
+                  <button class="primary" id="chantier-submit" type="submit">Enregistrer le chantier</button>
+                  <button class="ghost hidden" id="chantier-cancel-edit" type="button">Annuler</button>
+                </div>
+              </form>
+              <section class="panel">
+                <div class="panel-head">
+                  <h2>Chantiers relevés</h2>
+                  <small id="chantiers-count"></small>
+                </div>
+                <div id="chantiers-list" class="cards-list"></div>
+              </section>
+            </div>
+
+            <section class="panel" id="chantier-detail">
+              <div class="panel-head">
+                <h2 id="chantier-detail-title">Relevé de chantier</h2>
+                <small id="chantier-detail-sub"></small>
+              </div>
+              <p class="empty" id="chantier-empty">Créez un chantier pour y saisir les heures réellement prestées et les achats.</p>
+
+              <div id="chantier-detail-body" class="hidden">
+                <h3>Heures réellement prestées</h3>
+                <form class="releve-form" id="releve-form">
+                  <select name="ouvrage" aria-label="Ouvrage"></select>
+                  <input name="quantite" type="number" min="0" step="0.01" placeholder="Réalisé" required aria-label="Quantité réalisée" />
+                  <input name="personnes" type="number" min="1" step="1" value="1" placeholder="Pers." required aria-label="Nombre de personnes" />
+                  <input name="duree" type="number" min="0" step="0.25" placeholder="Heures" required aria-label="Durée en heures" />
+                  <button class="primary" type="submit">Ajouter</button>
+                </form>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Ouvrage</th>
+                        <th>Réalisé</th>
+                        <th>Pers.</th>
+                        <th>Heures</th>
+                        <th>Rendement prévu → réel</th>
+                        <th>Écart</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="releve-lines"></tbody>
+                  </table>
+                </div>
+
+                <h3>Achats du chantier</h3>
+                <form class="achat-form" id="achat-form">
+                  <select name="materiau" aria-label="Matériau"></select>
+                  <input name="quantite" type="number" min="0" step="0.01" placeholder="Quantité" required aria-label="Quantité facturée" />
+                  <input name="montant" type="number" min="0" step="0.01" placeholder="Montant payé (€)" required aria-label="Montant payé" />
+                  <button class="primary" type="submit">Ajouter</button>
+                </form>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Matériau</th>
+                        <th>Quantité</th>
+                        <th>Montant</th>
+                        <th>Prix payé</th>
+                        <th>Bibliothèque</th>
+                        <th>Écart</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="achat-lines"></tbody>
+                  </table>
+                </div>
+
+                <p class="warning-text" id="chantier-warning"></p>
+                <div class="totals" id="chantier-bilan"></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel" id="recalage">
+            <div class="panel-head">
+              <h2>Recalage de la bibliothèque</h2>
+              <small>Tous chantiers confondus, pondéré par les quantités</small>
+            </div>
+            <p class="empty" id="recalage-empty">Aucun relevé de chantier pour le moment.</p>
+
+            <div id="recalage-body" class="hidden">
+              <h3>Rendements observés</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ouvrage</th>
+                      <th>Prévu</th>
+                      <th>Observé</th>
+                      <th>Écart</th>
+                      <th>Relevé sur</th>
+                      <th>Prix de vente</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="recalage-rendements"></tbody>
+                </table>
+              </div>
+              <div class="form-actions">
+                <button class="ghost" id="recaler-tous-rendements" type="button">Recaler tous les rendements</button>
+              </div>
+
+              <h3>Prix d’achat observés</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Matériau</th>
+                      <th>Bibliothèque</th>
+                      <th>Payé</th>
+                      <th>Écart</th>
+                      <th>Relevé sur</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="recalage-prix"></tbody>
+                </table>
+              </div>
+              <div class="form-actions">
+                <button class="ghost" id="recaler-tous-prix" type="button">Recaler tous les prix</button>
+              </div>
+            </div>
+          </section>
         </section>
 
         <!-- Paramètres ------------------------------------------------------ -->

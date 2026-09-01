@@ -145,6 +145,130 @@ test("un composant sans materiau designe est ecarte", () => {
   assert.deepEqual(C.composantsOf(ouvrage), [{ materiauId: "m1", quantite: 1 }]);
 });
 
+/* ------------------------------------------------------ retour de chantier */
+
+const OUVRAGES = [
+  { id: "o1", nom: "Enduit de façade", unite: "m2", heures: 0.4, materiel: 2, composants: [{ materiauId: "m2", quantite: 3 }] },
+  { id: "o2", nom: "Peinture", unite: "m2", heures: 0.15, materiel: 0, composants: [] },
+];
+
+test("un releve traduit « n personnes pendant h heures » en rendement", () => {
+  const releve = { quantite: 50, personnes: 2, duree: 7 };
+  assert.equal(C.heuresReleve(releve), 14);
+  assert.equal(C.rendementReleve(releve), 0.28);
+});
+
+test("un releve sans quantite realisee ne produit pas de rendement", () => {
+  assert.equal(C.rendementReleve({ quantite: 0, personnes: 2, duree: 7 }), 0);
+});
+
+test("le prix reellement paye se deduit de la facture", () => {
+  assert.equal(C.prixAchat({ quantite: 25, montant: 85.5 }), 3.42);
+  assert.equal(C.prixAchat({ quantite: 0, montant: 85.5 }), 0, "pas de division par zero");
+});
+
+test("l'ecart relatif n'a pas de sens sans prevision", () => {
+  assert.equal(C.ecartRelatif(0.4, 0.5), 0.25);
+  assert.equal(C.ecartRelatif(0.5, 0.4), -0.2);
+  assert.equal(C.ecartRelatif(0, 0.4), null);
+});
+
+test("les rendements sont cumules sur tous les chantiers, ponderes par les quantites", () => {
+  const chantiers = [
+    { id: "c1", mainOeuvre: [{ id: "r1", ouvrageId: "o1", quantite: 100, personnes: 1, duree: 60 }] },
+    { id: "c2", mainOeuvre: [{ id: "r2", ouvrageId: "o1", quantite: 300, personnes: 2, duree: 30 }] },
+  ];
+  const observation = C.observerRendements(chantiers).get("o1");
+
+  assert.equal(observation.quantite, 400);
+  assert.equal(observation.heures, 120, "60 h puis 2 × 30 h");
+  assert.equal(observation.rendement, 0.3, "120 h / 400 m² — le gros chantier pèse davantage");
+  assert.equal(observation.releves, 2);
+  assert.equal(observation.chantiers, 2);
+});
+
+test("un releve sans ouvrage ou sans quantite est ecarte du recalage", () => {
+  const chantiers = [
+    {
+      id: "c1",
+      mainOeuvre: [
+        { id: "r1", ouvrageId: "", quantite: 10, personnes: 1, duree: 5 },
+        { id: "r2", ouvrageId: "o1", quantite: 0, personnes: 1, duree: 5 },
+      ],
+    },
+  ];
+  assert.equal(C.observerRendements(chantiers).size, 0);
+});
+
+test("les prix d'achat sont moyennes par les quantites facturees, et dates", () => {
+  const chantiers = [
+    { id: "c1", date: "2026-03-10", achats: [{ id: "a1", materiauId: "m2", quantite: 100, montant: 400 }] },
+    { id: "c2", date: "2026-07-02", achats: [{ id: "a2", materiauId: "m2", quantite: 300, montant: 1500 }] },
+  ];
+  const observation = C.observerPrixMateriaux(chantiers).get("m2");
+
+  assert.equal(observation.quantite, 400);
+  assert.equal(observation.montant, 1900);
+  assert.equal(observation.prix, 4.75);
+  assert.equal(observation.date, "2026-07-02", "le prix recale porte la date du dernier achat");
+});
+
+test("le bilan compare ce qui etait prevu et ce qui a ete depense", () => {
+  const chantier = {
+    id: "c1",
+    date: "2026-05-04",
+    mainOeuvre: [{ id: "r1", ouvrageId: "o1", quantite: 100, personnes: 2, duree: 25 }],
+    achats: [{ id: "a1", materiauId: "m2", quantite: 300, montant: 1500 }],
+  };
+  const bilan = C.bilanChantier(chantier, OUVRAGES, MATERIAUX, SETTINGS);
+
+  // Prevu : 0,4 h/m² × 100 = 40 h à 50 €, 3 kg/m² à 4 €, forfait matériel 2 €/m².
+  assert.equal(bilan.prevu.heures, 40);
+  assert.equal(bilan.prevu.mainOeuvre, 2000);
+  assert.equal(bilan.prevu.matieres, 1200);
+  assert.equal(bilan.prevu.materiel, 200);
+  assert.equal(bilan.prevu.direct, 3400);
+
+  // Reel : 50 h prestees, 1 500 € de matieres facturees.
+  assert.equal(bilan.reel.heures, 50);
+  assert.equal(bilan.reel.mainOeuvre, 2500);
+  assert.equal(bilan.reel.matieres, 1500);
+  assert.equal(bilan.reel.direct, 4200);
+
+  assert.equal(bilan.ecartDirect, 800);
+  assert.equal(C.roundMoney(bilan.recette), 4420, "3 400 € de coût direct × K = 1,3");
+  assert.equal(C.roundMoney(bilan.margePrevue), 1020);
+  assert.equal(C.roundMoney(bilan.margeReelle), 220, "la marge fond avec le dépassement");
+
+  const ligne = bilan.lignes[0];
+  assert.equal(ligne.rendementPrevu, 0.4);
+  assert.equal(ligne.rendementReel, 0.5);
+  assert.equal(ligne.ecart, 0.25);
+  assert.equal(bilan.achats[0].prix, 5);
+  assert.equal(bilan.achats[0].prixBibliotheque, 4);
+  assert.equal(bilan.achats[0].ecart, 0.25);
+});
+
+test("un chantier sans releve d'achat le signale plutot que d'afficher une marge flatteuse", () => {
+  const chantier = { id: "c1", mainOeuvre: [{ id: "r1", ouvrageId: "o1", quantite: 10, personnes: 1, duree: 4 }], achats: [] };
+  const bilan = C.bilanChantier(chantier, OUVRAGES, MATERIAUX, SETTINGS);
+  assert.equal(bilan.achatsManquants, true);
+  assert.equal(bilan.reel.matieres, 0);
+});
+
+test("un ouvrage supprime n'empeche pas le bilan du chantier", () => {
+  const chantier = { id: "c1", mainOeuvre: [{ id: "r1", ouvrageId: "disparu", quantite: 10, personnes: 1, duree: 4 }], achats: [] };
+  const bilan = C.bilanChantier(chantier, OUVRAGES, MATERIAUX, SETTINGS);
+  assert.equal(bilan.lignes[0].ouvrage, undefined);
+  assert.equal(bilan.recette, 0);
+  assert.equal(bilan.reel.mainOeuvre, 200, "les heures prestées restent comptées");
+});
+
+test("les heures recalees sont arrondies sans bruit de virgule flottante", () => {
+  assert.equal(C.roundHeures(0.1 + 0.2), 0.3);
+  assert.equal(C.roundHeures(14 / 50), 0.28);
+});
+
 /* -------------------------------------------------------------------- codes */
 
 test("les separateurs et la casse sont uniformises, les zeros de tete conserves", () => {

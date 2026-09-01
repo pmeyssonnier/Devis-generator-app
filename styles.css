@@ -195,7 +195,7 @@ button.ghost:hover {
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -855,4 +855,73 @@ tr.row-warning td {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+/* ----------------------------------------------------------------- chantiers */
+
+.chantier-column {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+#chantiers .editor-grid {
+  margin-bottom: 18px;
+}
+
+#chantiers h3 {
+  margin: 22px 0 10px;
+  font-size: 15px;
+}
+
+#chantiers h3:first-of-type {
+  margin-top: 0;
+}
+
+.releve-form,
+.achat-form {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.releve-form {
+  grid-template-columns: minmax(0, 1fr) 110px 80px 110px auto;
+}
+
+.achat-form {
+  grid-template-columns: minmax(0, 1fr) 130px 150px auto;
+}
+
+/* Saisie directe dans le tableau : corriger un relevé sans le ressaisir. */
+.cell-input {
+  width: 90px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.record-card.selected {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow);
+}
+
+.ecart-hausse {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.ecart-baisse {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+#recalage .form-actions {
+  margin-top: 12px;
+}
+
+@media (max-width: 1100px) {
+  .releve-form,
+  .achat-form {
+    grid-template-columns: 1fr 1fr;
+  }
 }

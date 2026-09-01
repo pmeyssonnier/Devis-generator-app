@@ -316,6 +316,191 @@
     };
   }
 
+  /* ------------------------------------------------------- retour de chantier */
+
+  /*
+   * Ce que le chantier a reellement coute, releve poste par poste :
+   *   - main-d'oeuvre : une quantite realisee et les heures qu'elle a demandees,
+   *     saisies comme « n personnes pendant h heures » ;
+   *   - achats : la quantite facturee et le montant paye, d'ou le prix reellement
+   *     obtenu chez le fournisseur.
+   * Ces releves ne modifient rien par eux-memes : ils servent a comparer, puis a
+   * recaler la bibliotheque quand l'entreprise le decide.
+   */
+
+  function heuresReleve(releve) {
+    const personnes = Number(releve?.personnes) || 0;
+    const duree = Number(releve?.duree) || 0;
+    return personnes * duree;
+  }
+
+  // Rendement constate, en heures par unite d'ouvrage.
+  function rendementReleve(releve) {
+    const quantite = Number(releve?.quantite) || 0;
+    return quantite > 0 ? heuresReleve(releve) / quantite : 0;
+  }
+
+  // Prix reellement obtenu, dans l'unite de prix du materiau.
+  function prixAchat(achat) {
+    const quantite = Number(achat?.quantite) || 0;
+    return quantite > 0 ? (Number(achat?.montant) || 0) / quantite : 0;
+  }
+
+  function roundHeures(value) {
+    return Math.round((Number(value) || 0) * 10000) / 10000;
+  }
+
+  /*
+   * Ecart relatif entre prevision et realite. Sans prevision, l'ecart n'a pas de sens.
+   * Le resultat est arrondi : un ecart sert a franchir un seuil d'alerte, et
+   * (0,5 - 0,4) / 0,4 vaut 0,2499999... en virgule flottante.
+   */
+  function ecartRelatif(prevu, reel) {
+    const base = Number(prevu) || 0;
+    if (!base) return null;
+    return Math.round((((Number(reel) || 0) - base) / base) * 1e6) / 1e6;
+  }
+
+  /*
+   * Un seul chantier ne fait pas un rendement : les releves sont cumules sur tous
+   * les chantiers enregistres, ponderes par les quantites realisees. Un poste fait
+   * une fois sur 5 m2 pese donc moins qu'un poste fait trois fois sur 400 m2.
+   */
+  function observerRendements(chantiers) {
+    const observations = new Map();
+    (chantiers || []).forEach((chantier) => {
+      (chantier?.mainOeuvre || []).forEach((releve) => {
+        const quantite = Number(releve?.quantite) || 0;
+        if (!releve?.ouvrageId || quantite <= 0) return;
+        if (!observations.has(releve.ouvrageId)) {
+          observations.set(releve.ouvrageId, { quantite: 0, heures: 0, releves: 0, chantiers: new Set() });
+        }
+        const observation = observations.get(releve.ouvrageId);
+        observation.quantite += quantite;
+        observation.heures += heuresReleve(releve);
+        observation.releves += 1;
+        observation.chantiers.add(chantier.id);
+      });
+    });
+    observations.forEach((observation) => {
+      observation.chantiers = observation.chantiers.size;
+      observation.rendement = observation.quantite > 0 ? observation.heures / observation.quantite : 0;
+    });
+    return observations;
+  }
+
+  // Meme principe pour les prix d'achat : moyenne ponderee par les quantites facturees.
+  function observerPrixMateriaux(chantiers) {
+    const observations = new Map();
+    (chantiers || []).forEach((chantier) => {
+      (chantier?.achats || []).forEach((achat) => {
+        const quantite = Number(achat?.quantite) || 0;
+        if (!achat?.materiauId || quantite <= 0) return;
+        if (!observations.has(achat.materiauId)) {
+          observations.set(achat.materiauId, { quantite: 0, montant: 0, achats: 0, chantiers: new Set(), date: "" });
+        }
+        const observation = observations.get(achat.materiauId);
+        observation.quantite += quantite;
+        observation.montant += Number(achat?.montant) || 0;
+        observation.achats += 1;
+        observation.chantiers.add(chantier.id);
+        // La date la plus recente datera le prix recale.
+        if (chantier.date && chantier.date > observation.date) observation.date = chantier.date;
+      });
+    });
+    observations.forEach((observation) => {
+      observation.chantiers = observation.chantiers.size;
+      observation.prix = observation.quantite > 0 ? observation.montant / observation.quantite : 0;
+    });
+    return observations;
+  }
+
+  /*
+   * Bilan d'un chantier : ce qu'il a rapporte, ce qu'il devait couter d'apres la
+   * bibliotheque, ce qu'il a reellement coute.
+   *
+   * Le forfait « materiel et accessoires » n'est pas releve : il est repris tel quel
+   * du prix prevu, faute de mieux, et compte donc a l'identique des deux cotes.
+   */
+  function bilanChantier(chantier, ouvrages, materiaux, settings) {
+    const trouverOuvrage = materialResolver(ouvrages);
+    const trouverMateriau = materialResolver(materiaux);
+    const coutHoraire = Number(settings?.coutHoraire) || 0;
+
+    const lignes = (chantier?.mainOeuvre || []).map((releve) => {
+      const ouvrage = trouverOuvrage(releve.ouvrageId);
+      const quantite = Number(releve?.quantite) || 0;
+      const heures = heuresReleve(releve);
+      const calc = ouvrage ? calculateOuvrage(ouvrage, settings, materiaux) : null;
+      const rendementPrevu = Number(ouvrage?.heures) || 0;
+      const rendementReel = rendementReleve(releve);
+      return {
+        releveId: releve.id,
+        ouvrageId: releve.ouvrageId,
+        ouvrage,
+        quantite,
+        personnes: Number(releve?.personnes) || 0,
+        duree: Number(releve?.duree) || 0,
+        heures,
+        rendementPrevu,
+        rendementReel,
+        ecart: ecartRelatif(rendementPrevu, rendementReel),
+        heuresPrevues: rendementPrevu * quantite,
+        recette: calc ? calc.vente * quantite : 0,
+        prevuMainOeuvre: rendementPrevu * quantite * coutHoraire,
+        prevuMatieres: calc ? calc.matieres * quantite : 0,
+        materiel: calc ? calc.materiel * quantite : 0,
+        reelMainOeuvre: heures * coutHoraire,
+      };
+    });
+
+    const achats = (chantier?.achats || []).map((achat) => {
+      const materiau = trouverMateriau(achat.materiauId);
+      const prix = prixAchat(achat);
+      return {
+        achatId: achat.id,
+        materiauId: achat.materiauId,
+        materiau,
+        quantite: Number(achat?.quantite) || 0,
+        montant: Number(achat?.montant) || 0,
+        prix,
+        prixBibliotheque: Number(materiau?.prix) || 0,
+        ecart: ecartRelatif(Number(materiau?.prix) || 0, prix),
+      };
+    });
+
+    const somme = (liste, champ) => liste.reduce((total, item) => total + item[champ], 0);
+    const materiel = somme(lignes, "materiel");
+    const prevu = {
+      mainOeuvre: somme(lignes, "prevuMainOeuvre"),
+      matieres: somme(lignes, "prevuMatieres"),
+      materiel,
+      heures: somme(lignes, "heuresPrevues"),
+    };
+    prevu.direct = prevu.mainOeuvre + prevu.matieres + prevu.materiel;
+    const reel = {
+      mainOeuvre: somme(lignes, "reelMainOeuvre"),
+      matieres: somme(achats, "montant"),
+      materiel,
+      heures: somme(lignes, "heures"),
+    };
+    reel.direct = reel.mainOeuvre + reel.matieres + reel.materiel;
+    const recette = somme(lignes, "recette");
+
+    return {
+      lignes,
+      achats,
+      recette,
+      prevu,
+      reel,
+      ecartDirect: reel.direct - prevu.direct,
+      margePrevue: recette - prevu.direct,
+      margeReelle: recette - reel.direct,
+      // Sans releve d'achat, la marge reelle n'est pas comparable : il manque les matieres.
+      achatsManquants: lignes.length > 0 && achats.length === 0,
+    };
+  }
+
   /* ------------------------------------------------------------------ codes */
 
   function isInternalCode(value) {
@@ -679,6 +864,14 @@
     materialResolver,
     composantsDetail,
     calculateOuvrage,
+    heuresReleve,
+    rendementReleve,
+    prixAchat,
+    roundHeures,
+    ecartRelatif,
+    observerRendements,
+    observerPrixMateriaux,
+    bilanChantier,
     isInternalCode,
     classifyFamily,
     internalCodePrefix,
