@@ -115,8 +115,9 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 
 | Fichier | Rôle |
 | --- | --- |
-| `index.html` | Structure des sept vues |
+| `index.html` | Structure des sept vues, sprite SVG des icônes de navigation |
 | `styles.css` | Mise en forme |
+| `favicon.svg` | Icône de l'onglet du navigateur |
 | `catalog.js` | Catalogue de départ et codifications connues |
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier, péremption des prix |
 | `app.js` | État, rendu, événements, imports/exports |

@@ -76,6 +76,9 @@ textarea {
 }
 
 .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
   border: 0;
   border-radius: 8px;
@@ -90,6 +93,20 @@ textarea {
 .nav-item.active {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+/* Sprite d'icones : jamais affiche pour lui-meme, seulement source des <use>. */
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.nav-icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
 }
 
 .sidebar-version {
