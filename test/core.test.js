@@ -269,6 +269,48 @@ test("les heures recalees sont arrondies sans bruit de virgule flottante", () =>
   assert.equal(C.roundHeures(14 / 50), 0.28);
 });
 
+/* -------------------------------------------------------------- peremption des prix */
+
+const AUJOURDHUI = new Date("2026-09-01T12:00:00");
+
+test("l'age d'un prix se compte en jours pleins", () => {
+  assert.equal(C.joursDepuisPrix("2026-08-02", AUJOURDHUI), 30);
+  assert.equal(C.joursDepuisPrix("2026-09-01", AUJOURDHUI), 0);
+});
+
+test("un prix sans date ou invalide n'a pas d'age calculable", () => {
+  assert.equal(C.joursDepuisPrix("", AUJOURDHUI), null);
+  assert.equal(C.joursDepuisPrix(undefined, AUJOURDHUI), null);
+  assert.equal(C.joursDepuisPrix("pas une date", AUJOURDHUI), null);
+});
+
+test("un prix n'est perime qu'au-dela du seuil, et seulement s'il est date", () => {
+  const recent = { datePrix: "2026-08-15" }; // 17 jours
+  const ancien = { datePrix: "2026-01-10" }; // > 180 jours
+  const sansDate = { datePrix: "" };
+
+  assert.equal(C.prixPerime(recent, AUJOURDHUI, 180).perime, false);
+  assert.equal(C.prixPerime(ancien, AUJOURDHUI, 180).perime, true);
+  assert.equal(C.prixPerime(sansDate, AUJOURDHUI, 180).perime, false, "pas de date, pas d'age : c'est deja signale ailleurs");
+});
+
+test("un seuil a zero desactive l'alerte, quel que soit l'age du prix", () => {
+  const tresAncien = { datePrix: "2020-01-01" };
+  assert.equal(C.prixPerime(tresAncien, AUJOURDHUI, 0).perime, false);
+});
+
+test("les materiaux perimes sont tries du plus ancien au plus recent", () => {
+  const materiaux = [
+    { id: "m1", nom: "Recent", datePrix: "2026-08-01" },
+    { id: "m2", nom: "Tres ancien", datePrix: "2025-01-01" },
+    { id: "m3", nom: "Non date", datePrix: "" },
+    { id: "m4", nom: "Ancien", datePrix: "2026-02-01" },
+  ];
+  const perimes = C.materiauxPerimes(materiaux, AUJOURDHUI, 180);
+  assert.deepEqual(perimes.map((item) => item.materiau.nom), ["Tres ancien", "Ancien"]);
+  assert.ok(perimes[0].jours > perimes[1].jours);
+});
+
 /* -------------------------------------------------------------------- codes */
 
 test("les separateurs et la casse sont uniformises, les zeros de tete conserves", () => {

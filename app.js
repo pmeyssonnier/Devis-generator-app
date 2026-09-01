@@ -291,6 +291,12 @@
     $("#kpi-devis").textContent = euro.format(totals.ht);
     $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId).length;
     $("#kpi-recalage").textContent = recalagesRendement().filter(aRecaler).length + recalagesPrix().filter(aRecaler).length;
+    $("#kpi-peremption").textContent = materiauxPerimes().length;
+  }
+
+  // Prix matieres dates au-dela du seuil regle dans les parametres. seuil <= 0 : desactive.
+  function materiauxPerimes() {
+    return C.materiauxPerimes(state.materiaux, new Date(), state.settings.peremptionJours);
   }
 
   function renderDashboard() {
@@ -319,6 +325,40 @@
           .map((alert) => `<div class="alert ${alert.type === "danger" ? "danger" : ""}">${esc(alert.message)}</div>`)
           .join("")
       : `<p class="empty">Aucun problème détecté pour le moment.</p>`;
+
+    renderPeremption();
+  }
+
+  function renderPeremption() {
+    const perimes = materiauxPerimes();
+    $("#peremption-list").innerHTML = perimes.length
+      ? perimes
+          .map(
+            ({ materiau, jours }) => `<div class="duplicate-item">
+              <strong>${esc(materiau.nom)}</strong>
+              <span>${euro.format(materiau.prix)} / ${esc(materiau.unite)} · prix du ${esc(materiau.datePrix)}, il y a ${number.format(jours)} jours</span>
+              <div class="card-actions">
+                <button class="edit-button" data-confirm-prix-materiau="${materiau.id}" type="button">Prix toujours valable</button>
+                <button class="edit-button" data-edit-materiau="${materiau.id}" type="button">Éditer</button>
+              </div>
+            </div>`,
+          )
+          .join("")
+      : `<p class="empty">${
+          Number(state.settings.peremptionJours) > 0
+            ? "Aucun prix à vérifier."
+            : "Alerte désactivée (seuil à 0 dans les paramètres)."
+        }</p>`;
+  }
+
+  // Le prix n'a pas change, seule sa date de controle est reconduite a aujourd'hui.
+  function confirmerPrixMateriau(id) {
+    const materiau = materialById(id);
+    if (!materiau) return;
+    materiau.datePrix = new Date().toISOString().slice(0, 10);
+    saveState();
+    render();
+    notify("Prix confirmé à jour.", "info");
   }
 
   function matchesSearch(query, values) {
@@ -347,8 +387,9 @@
     $("#materiaux-count").textContent = `${materiaux.length} / ${state.materiaux.length}`;
     $("#materiaux-list").innerHTML = materiaux.length
       ? materiaux
-          .map(
-            (materiau) => `<article class="record-card">
+          .map((materiau) => {
+            const { perime, jours } = C.prixPerime(materiau, new Date(), state.settings.peremptionJours);
+            return `<article class="record-card ${perime ? "stale" : ""}">
               <header>
                 <div>
                   <strong>${esc(materiau.nom)}</strong>
@@ -359,12 +400,14 @@
               <p>${esc(materiau.conditionnement || "Conditionnement non renseigné")} · ${esc(materiau.reference || "sans référence")}${
                 materiau.datePrix ? ` · prix du ${esc(materiau.datePrix)}` : " · <em>prix non daté</em>"
               }</p>
+              ${perime ? `<p class="warning-text">Prix à vérifier — daté d’il y a ${number.format(jours)} jours.</p>` : ""}
               <div class="card-actions">
+                ${perime ? `<button class="edit-button" data-confirm-prix-materiau="${materiau.id}" type="button">Prix toujours valable</button>` : ""}
                 <button class="edit-button" data-edit-materiau="${materiau.id}" type="button">Éditer</button>
                 <button class="delete-button" data-delete-materiau="${materiau.id}" type="button">Supprimer</button>
               </div>
-            </article>`,
-          )
+            </article>`;
+          })
           .join("")
       : `<p class="empty">Aucun matériau ne correspond à la recherche.</p>`;
   }
@@ -570,7 +613,7 @@
 
   function renderSettings() {
     const form = $("#settings-form");
-    ["coutHoraire", "fraisGeneraux", "fraisChantier", "imprevus", "marge"].forEach((key) => {
+    ["coutHoraire", "fraisGeneraux", "fraisChantier", "imprevus", "marge", "peremptionJours"].forEach((key) => {
       if (form.elements[key]) form.elements[key].value = state.settings[key];
     });
     form.elements.tva.value = String(state.settings.tva);
@@ -599,6 +642,7 @@
       imprevus: Number(data.imprevus) || 0,
       marge: Number(data.marge) || 0,
       tva: Number(data.tva) || state.settings.tva || 21,
+      peremptionJours: Math.max(0, Number(data.peremptionJours) || 0),
     };
     state.entrepreneur = {
       nom: data["entrepreneur-nom"] ?? "",
@@ -1315,18 +1359,20 @@
 
   /* ------------------------------------------------------------------ events */
 
-  document.querySelectorAll(".nav-item").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".nav-item").forEach((item) => {
-        item.classList.remove("active");
-        item.removeAttribute("aria-current");
-      });
-      document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
-      button.classList.add("active");
-      button.setAttribute("aria-current", "page");
-      $(`#${button.dataset.view}`).classList.add("active");
-      $("#view-title").textContent = VIEW_LABELS[button.dataset.view];
+  // Reutilise par les actions qui doivent amener sur une autre vue avant d'agir
+  // (ex. « Éditer » un prix perime depuis le tableau de bord).
+  function goToView(name) {
+    document.querySelectorAll(".nav-item").forEach((item) => {
+      item.classList.toggle("active", item.dataset.view === name);
+      if (item.dataset.view === name) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
     });
+    document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === name));
+    $("#view-title").textContent = VIEW_LABELS[name];
+  }
+
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    button.addEventListener("click", () => goToView(button.dataset.view));
   });
 
   $("#materiau-form").addEventListener("submit", (event) => {
@@ -1403,6 +1449,10 @@
       renderOuvrages();
       renderDevis();
       renderMetre();
+    }
+    if (event.target.name === "peremptionJours") {
+      renderPeremption();
+      renderMateriaux();
     }
   });
 
@@ -1609,6 +1659,7 @@
     const data = target.dataset;
 
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
+    if (data.confirmPrixMateriau) return confirmerPrixMateriau(data.confirmPrixMateriau);
     if (data.editMateriau) return startMateriauEdit(data.editMateriau);
     if (data.editOuvrage) return startOuvrageEdit(data.editOuvrage);
     if (data.editLigne) return startDevisLineEdit(data.editLigne);
@@ -1717,6 +1768,7 @@
   function startMateriauEdit(id) {
     const materiau = materialById(id);
     if (!materiau) return;
+    goToView("materiaux");
     editingMateriauId = id;
     const form = $("#materiau-form");
     ["nom", "unite", "fournisseur", "reference", "conditionnement", "prix", "datePrix"].forEach((field) => {

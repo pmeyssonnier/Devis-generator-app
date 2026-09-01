@@ -59,6 +59,7 @@
             <article><span>Devis en cours HTVA</span><strong id="kpi-devis">0,00 €</strong></article>
             <article><span>Postes non reconnus</span><strong id="kpi-alertes">0</strong></article>
             <article><span>Corrections en attente</span><strong id="kpi-recalage">0</strong></article>
+            <article><span>Prix à vérifier</span><strong id="kpi-peremption">0</strong></article>
           </div>
           <div class="split">
             <section class="panel">
@@ -88,6 +89,13 @@
               <div id="alerts-list" class="alerts-list"></div>
             </section>
           </div>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Prix à vérifier</h2>
+              <small>Prix matériaux datés au-delà du seuil réglé dans les paramètres</small>
+            </div>
+            <div id="peremption-list" class="duplicate-list"></div>
+          </section>
         </section>
 
         <!-- Ouvrages -------------------------------------------------------- -->
@@ -363,6 +371,13 @@
                 <strong id="settings-k">1,000</strong>
                 <small id="settings-k-formula">K = 1 + 0 / 100</small>
               </div>
+            </div>
+            <div class="settings-section">
+              <h3>Matériaux</h3>
+              <label>Alerte de péremption des prix (jours)
+                <input name="peremptionJours" type="number" min="0" step="1" />
+                <small>Au-delà, un prix daté est signalé à vérifier. 0 désactive l’alerte.</small>
+              </label>
             </div>
             <button class="primary" type="submit">Mettre à jour</button>
           </form>

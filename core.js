@@ -501,6 +501,37 @@
     };
   }
 
+  /* ---------------------------------------------------------- peremption des prix */
+
+  /*
+   * Un materiau sans date de prix n'a pas d'age calculable : c'est deja signale
+   * ailleurs (« prix non date »), et ce n'est pas ce qu'on cherche ici. La
+   * peremption ne porte que sur les prix effectivement dates.
+   */
+  function joursDepuisPrix(datePrix, reference) {
+    const debut = new Date(`${String(datePrix ?? "").trim()}T00:00:00`);
+    if (Number.isNaN(debut.getTime())) return null;
+    const fin = reference instanceof Date ? reference : new Date(reference);
+    // datePrix est ancre a minuit : arrondir a l'entier inferieur donne le nombre
+    // de jours calendaires ecoules, quelle que soit l'heure de "reference".
+    return Math.floor((fin.getTime() - debut.getTime()) / 86400000);
+  }
+
+  // seuilJours <= 0 : l'alerte est desactivee, aucun prix n'est jamais signale perime.
+  function prixPerime(materiau, reference, seuilJours) {
+    const jours = joursDepuisPrix(materiau?.datePrix, reference);
+    const seuil = Number(seuilJours) || 0;
+    return { jours, perime: jours !== null && seuil > 0 && jours >= seuil };
+  }
+
+  // Les plus perimes en tete : ce sont ceux qu'il est le plus urgent de revoir.
+  function materiauxPerimes(materiaux, reference, seuilJours) {
+    return (materiaux || [])
+      .map((materiau) => ({ materiau, ...prixPerime(materiau, reference, seuilJours) }))
+      .filter((item) => item.perime)
+      .sort((a, b) => b.jours - a.jours);
+  }
+
   /* ------------------------------------------------------------------ codes */
 
   function isInternalCode(value) {
@@ -872,6 +903,9 @@
     observerRendements,
     observerPrixMateriaux,
     bilanChantier,
+    joursDepuisPrix,
+    prixPerime,
+    materiauxPerimes,
     isInternalCode,
     classifyFamily,
     internalCodePrefix,
