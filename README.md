@@ -96,6 +96,21 @@ prix qui s'écartent de plus de 5 % des relevés.
 Un relevé peut être corrigé directement dans son tableau. Supprimer un chantier retire
 ses relevés du recalage, mais laisse en place les corrections déjà appliquées.
 
+## Alerte de péremption des prix
+
+Un prix de matériau porte une date. Passé un seuil réglable dans les paramètres
+(180 jours par défaut, 0 désactive l'alerte), il est signalé comme à vérifier : sur sa
+fiche dans la bibliothèque, et dans le panneau « Prix à vérifier » du tableau de bord,
+trié du plus ancien au plus récent.
+
+Deux actions depuis ce panneau : **Éditer** pour corriger le prix, ou **Prix toujours
+valable** pour reconduire la date à aujourd'hui sans rien changer d'autre — la façon la
+plus rapide de confirmer un prix qui n'a en fait pas bougé. Le recalage d'un prix depuis
+un chantier (voir plus haut) date également le prix, sur le même principe.
+
+Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps il n'a pas
+été vérifié, il reste seulement marqué « prix non daté » sur sa fiche.
+
 ## Organisation du code
 
 | Fichier | Rôle |
@@ -103,7 +118,7 @@ ses relevés du recalage, mais laisse en place les corrections déjà appliquée
 | `index.html` | Structure des sept vues |
 | `styles.css` | Mise en forme |
 | `catalog.js` | Catalogue de départ et codifications connues |
-| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier |
+| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier, péremption des prix |
 | `app.js` | État, rendu, événements, imports/exports |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
 
@@ -135,4 +150,5 @@ le devis en cours. C'est le seul moyen de transférer la mémoire de chiffrage d
 - Le recalage remplace la valeur de la bibliothèque par la moyenne observée. Il ne
   distingue pas encore un chantier atypique d'une dérive durable : c'est le volume
   affiché en regard qui permet d'en juger.
-- Les prix des matériaux portent une date, mais aucune alerte de péremption n'est levée.
+- « Prix toujours valable » reconduit la date sans historiser l'ancienne : impossible de
+  retrouver après coup depuis quand un prix est réellement resté stable.

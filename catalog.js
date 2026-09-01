@@ -13,6 +13,8 @@
     imprevus: 4,
     marge: 18,
     tva: 21,
+    // Au-dela, un prix materiau date est signale comme a verifier. 0 desactive l'alerte.
+    peremptionJours: 180,
   };
 
   const defaultEntrepreneur = {

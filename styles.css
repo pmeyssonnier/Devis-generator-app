@@ -905,6 +905,12 @@ tr.row-warning td {
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow);
 }
 
+/* Prix matiere date au-dela du seuil de peremption regle dans les parametres. */
+.record-card.stale {
+  border-color: var(--warn);
+  box-shadow: inset 3px 0 0 var(--warn), var(--shadow);
+}
+
 .ecart-hausse {
   color: var(--danger);
   font-weight: 700;
