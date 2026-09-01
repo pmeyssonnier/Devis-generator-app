@@ -1,4 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="7" fill="#0f7c6c" />
-  <text x="16" y="21.5" text-anchor="middle" font-family="Arial, sans-serif" font-weight="800" font-size="14" fill="#ffffff">GD</text>
+  <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 17L16 7l9 10" />
+    <path d="M5 23h22" />
+    <path d="M11 23v4M16 23v4M21 23v4" />
+  </g>
 </svg>

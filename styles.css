@@ -56,7 +56,12 @@ textarea {
   place-items: center;
   border-radius: 8px;
   background: var(--accent);
-  font-weight: 800;
+  flex: none;
+}
+
+.brand-mark svg {
+  width: 27px;
+  height: 27px;
 }
 
 .brand strong,
