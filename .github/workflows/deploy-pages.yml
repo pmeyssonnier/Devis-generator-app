@@ -23,7 +23,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # enablement: true active Pages au premier deploiement — ce depot ne l'avait
+      # jamais eu, ni via Actions ni via une branche.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
