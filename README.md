@@ -10,7 +10,11 @@ le `localStorage` du poste.
 
 ## Démarrer
 
-Ouvrir `index.html` dans un navigateur récent.
+**En ligne :** https://pmeyssonnier.github.io/Devis-generator-app/ — utilisable depuis
+n'importe quel appareil, y compris un téléphone. Les données restent propres à chaque
+appareil et à chaque navigateur (`localStorage`) : rien n'est synchronisé entre eux.
+
+**En local :** ouvrir `index.html` dans un navigateur récent.
 
 Le premier lancement installe un catalogue de départ : 51 ouvrages et 38 matériaux
 couvrant les lots courants de rénovation, avec les codifications de métré déjà
