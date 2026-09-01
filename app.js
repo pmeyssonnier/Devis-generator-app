@@ -35,6 +35,9 @@
   // Classeur d'origine du dernier metre importe : garde en memoire uniquement,
   // il permet de rendre au pouvoir adjudicateur son propre fichier complete.
   let sourceWorkbook = null;
+  // Octets d'origine intacts : chaque export en repart, pour ne jamais publier un
+  // prix ecrit lors d'un export precedent et jamais retire depuis (cf. exportMetreSource).
+  let sourceArrayBuffer = null;
   let sourceFileName = "";
 
   let editingMateriauId = "";
@@ -50,6 +53,14 @@
 
   function uid() {
     return globalThis.crypto?.randomUUID?.() || `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  // Date du jour LOCALE, au format YYYY-MM-DD. new Date().toISOString() donne la
+  // date UTC : entre minuit et 2h du matin en Belgique l'ete, ça reste la veille.
+  function todayLocalISO() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   }
 
   /* ------------------------------------------------------------------- etat */
@@ -361,7 +372,7 @@
   function confirmerPrixMateriau(id) {
     const materiau = materialById(id);
     if (!materiau) return;
-    materiau.datePrix = new Date().toISOString().slice(0, 10);
+    materiau.datePrix = todayLocalISO();
     saveState();
     render();
     notify("Prix confirmé à jour.", "info");
@@ -964,7 +975,7 @@
     const form = $("#chantier-form");
     form.reset();
     // Un releve porte presque toujours sur le jour meme.
-    form.elements.date.value = new Date().toISOString().slice(0, 10);
+    form.elements.date.value = todayLocalISO();
     editingChantierId = "";
     updateChantierForm();
   }
@@ -1006,7 +1017,7 @@
         }
         const group = groups.get(key);
         const unite = C.normalizeUnit(row.unite) || row.unite || "?";
-        const reason = !row.ouvrageId ? "ouvrage manquant" : !row.quantiteOk ? "quantité à vérifier" : "unité incompatible";
+        const reason = row.unitWarning ? "unité incompatible" : !row.ouvrageId ? "ouvrage manquant" : "quantité à vérifier";
         group.count += 1;
         if (!group.unites.includes(unite)) group.unites.push(unite);
         group.quantitesByUnit[unite] = (group.quantitesByUnit[unite] || 0) + (Number(row.quantite) || 0);
@@ -1161,9 +1172,16 @@
       const label = `Poste ${numero}`;
       if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
       if (!quantiteOk) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
-      if (!match.ouvrageId) {
+      if (!match.ouvrageId && match.unitWarning) {
+        alerts.push({
+          type: "danger",
+          message: `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
+        });
+      } else if (!match.ouvrageId) {
         alerts.push({ type: "warning", message: `${label} : aucun ouvrage reconnu pour « ${description} ».` });
       } else if (match.unitWarning) {
+        // Filet de securite : ne devrait plus se produire (findMatch et le choix manuel
+        // bloquent deja l'unite incompatible), mais garde le message si un cas restait.
         alerts.push({
           type: "danger",
           message: `${label} : unité « ${unite} » incompatible avec l’ouvrage retenu.`,
@@ -1200,7 +1218,9 @@
   // Enregistre la correspondance choisie : elle sera reconnue au prochain marche.
   function learnMatch(row) {
     const ouvrage = ouvrageById(row.ouvrageId);
-    if (!ouvrage || !row.numero) return;
+    // Filet de securite : ne jamais memoriser un rapprochement dont l'unite ne
+    // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
+    if (!ouvrage || !row.numero || row.unitWarning) return;
     const before = ouvrage.refsMetre.length;
     ouvrage.refsMetre = C.normalizeRefList([ouvrage.refsMetre, row.numero]);
     if (ouvrage.refsMetre.length !== before) {
@@ -1235,10 +1255,15 @@
   /*
    * Ecrit les prix unitaires dans le classeur recu et le renvoie tel quel :
    * feuilles, formules, sous-totaux et recapitulatif sont conserves.
+   *
+   * Reparti a chaque export depuis les octets d'origine (sourceArrayBuffer),
+   * jamais depuis un classeur deja modifie : sinon un prix ecrit lors d'un export
+   * precedent restait dans le fichier meme apres que l'utilisateur ait retire le
+   * rapprochement correspondant (le poste etait simplement ignore, pas efface).
    */
   function exportMetreSource() {
     if (!requireXlsx()) return;
-    if (!sourceWorkbook) {
+    if (!sourceArrayBuffer) {
       notify("Réimportez le fichier du métré pour pouvoir le compléter.", "danger");
       return;
     }
@@ -1248,16 +1273,19 @@
       return;
     }
 
+    const workbook = XLSX.read(sourceArrayBuffer, { cellFormula: true, cellStyles: true });
     let written = 0;
     let skipped = 0;
     state.metre.analysed.forEach((row) => {
-      const sheet = sourceWorkbook.Sheets[row.sheet];
+      const sheet = workbook.Sheets[row.sheet];
       if (!sheet || row.puCol === undefined || row.rowIndex === undefined) {
         skipped += 1;
         return;
       }
       const ouvrage = ouvrageById(row.ouvrageId);
-      if (!ouvrage) {
+      // Unite incompatible : jamais de prix exportable, meme si un rapprochement
+      // errone avait pu etre memorise avant ce garde-fou.
+      if (!ouvrage || row.unitWarning) {
         skipped += 1;
         return;
       }
@@ -1271,7 +1299,7 @@
       return;
     }
     const base = sourceFileName.replace(/\.(xlsx|xlsm|xls)$/i, "") || "metre";
-    XLSX.writeFile(sourceWorkbook, `${base}-chiffre.xlsx`);
+    XLSX.writeFile(workbook, `${base}-chiffre.xlsx`);
     notify(
       `${written} prix reporté(s) dans le fichier d’origine${skipped ? `, ${skipped} poste(s) laissé(s) vide(s)` : ""}.`,
       "info",
@@ -1320,7 +1348,7 @@
             ouvrage ? C.roundMoney(row.confidence) : "",
             ouvrage ? C.roundMoney(priceOf(ouvrage).vente) : "",
             C.roundMoney(metreRowPrice(row)),
-            !ouvrage ? "Ouvrage manquant" : row.unitWarning ? "Unité incompatible" : row.quantiteOk ? "OK" : "Quantité à vérifier",
+            row.unitWarning ? "Unité incompatible" : !ouvrage ? "Ouvrage manquant" : row.quantiteOk ? "OK" : "Quantité à vérifier",
           ];
         }),
       ],
@@ -1904,14 +1932,25 @@
     if (index === undefined) return;
     const row = state.metre.analysed[Number(index)];
     if (!row) return;
+    const chosen = ouvrageById(event.target.value);
+    // Meme regle qu'au rapprochement automatique : une unite incompatible n'est
+    // jamais assignable, choix manuel compris — sinon rien n'empeche de mémoriser
+    // et d'exporter un prix pour la mauvaise unite par une simple erreur de saisie.
+    if (chosen && !C.unitsCompatible(chosen.unite, row.unite)) {
+      event.target.value = row.ouvrageId || "";
+      notify(
+        `Unité incompatible : « ${row.unite || "?"} » ne peut pas être chiffré avec « ${chosen.nom} » (${chosen.unite}).`,
+        "danger",
+      );
+      return;
+    }
     row.ouvrageId = event.target.value;
     row.manual = Boolean(event.target.value);
     row.confidence = event.target.value ? 1 : 0;
     row.reason = event.target.value ? "confirmé" : "";
     row.suggestionId = "";
-    const ouvrage = ouvrageById(row.ouvrageId);
-    row.unitWarning = ouvrage ? !C.unitsCompatible(ouvrage.unite, row.unite) : false;
-    if (ouvrage) learnMatch(row);
+    row.unitWarning = false;
+    if (chosen) learnMatch(row);
     saveState();
     render();
   });
@@ -1945,7 +1984,8 @@
 
       if (["xlsx", "xlsm", "xls"].includes(extension)) {
         if (!requireXlsx()) return;
-        sourceWorkbook = XLSX.read(await file.arrayBuffer(), { cellFormula: true, cellStyles: true });
+        sourceArrayBuffer = await file.arrayBuffer();
+        sourceWorkbook = XLSX.read(sourceArrayBuffer, { cellFormula: true, cellStyles: true });
         sourceFileName = file.name;
         sourceWorkbook.SheetNames.forEach((sheetName) => {
           if (C.normalizeText(sheetName).includes("recap")) return;
@@ -1959,6 +1999,7 @@
         });
       } else {
         sourceWorkbook = null;
+        sourceArrayBuffer = null;
         sourceFileName = file.name;
         const parsed = C.rowsFromGrid(C.parseDelimited(await file.text()), file.name);
         rows = parsed.rows;
@@ -2072,6 +2113,7 @@
     if (!window.confirm("Cette action est définitive. Confirmer ?")) return;
     state = normalizeState(blankState());
     sourceWorkbook = null;
+    sourceArrayBuffer = null;
     sourceFileName = "";
     seedCatalog(true);
     saveState();

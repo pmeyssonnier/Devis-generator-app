@@ -284,6 +284,25 @@ test("un prix sans date ou invalide n'a pas d'age calculable", () => {
   assert.equal(C.joursDepuisPrix("pas une date", AUJOURDHUI), null);
 });
 
+test("le passage a l'heure d'ete ne fait pas perdre un jour", () => {
+  // Le 29 mars 2026, la Belgique passe de 2h a 3h : cette journee ne compte que
+  // 23 heures reelles. Diviser un ecart de millisecondes par 86 400 000 sous-compte
+  // donc d'un jour pile ce jour-la ; comparer les dates civiles (Y/M/D) n'a pas ce
+  // defaut. process.env.TZ est lu a chaque construction de Date, pas seulement au
+  // demarrage : le fixer ici suffit, quel que soit le fuseau du poste qui execute
+  // le test (utile en CI, generalement en UTC — sans heure d'ete a traverser).
+  const tzOriginal = process.env.TZ;
+  process.env.TZ = "Europe/Brussels";
+  try {
+    const debutJourDst = new Date(2026, 2, 29, 0, 0, 0);
+    const lendemain = new Date(2026, 2, 30, 0, 0, 0);
+    assert.equal((lendemain - debutJourDst) / 3600000, 23, "verifie que ce cas traverse bien la journee a 23h");
+    assert.equal(C.joursDepuisPrix("2026-03-29", lendemain), 1);
+  } finally {
+    process.env.TZ = tzOriginal;
+  }
+});
+
 test("un prix n'est perime qu'au-dela du seuil, et seulement s'il est date", () => {
   const recent = { datePrix: "2026-08-15" }; // 17 jours
   const ancien = { datePrix: "2026-01-10" }; // > 180 jours
@@ -368,6 +387,15 @@ test("un code deja rencontre est reconnu avec certitude", () => {
   assert.equal(match.ouvrageId, "a");
   assert.equal(match.confidence, 1);
   assert.equal(match.reason, "code connu");
+});
+
+test("un code connu ne suffit pas si l'unite ne correspond plus", () => {
+  // "2.05" est bien rattache a l'ouvrage a, mais celui-ci se chiffre au m2, pas au m :
+  // l'unite est eliminatoire, meme pour un code deja rencontre.
+  const match = C.findMatch({ poste: "2.05", numero: "2.05", description: "Libellé inconnu", unite: "m" }, ouvragesTest, new Map());
+  assert.equal(match.ouvrageId, "", "aucun prix ne doit etre calculable pour ce poste");
+  assert.equal(match.unitWarning, true);
+  assert.equal(match.suggestionId, "a", "le code reste propose comme piste, pas comme correspondance appliquee");
 });
 
 test("un code d'une autre codification n'est pas confondu", () => {
