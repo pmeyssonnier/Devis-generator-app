@@ -11,8 +11,10 @@ le `localStorage` du poste.
 ## Démarrer
 
 **En ligne :** https://pmeyssonnier.github.io/Devis-generator-app/ — utilisable depuis
-n'importe quel appareil, y compris un téléphone. Les données restent propres à chaque
-appareil et à chaque navigateur (`localStorage`) : rien n'est synchronisé entre eux.
+n'importe quel appareil, y compris un téléphone. Sur mobile, « Ajouter à l'écran
+d'accueil » installe une icône propre à l'application, qui s'ouvre en plein écran sans
+la barre d'adresse. Les données restent propres à chaque appareil et à chaque
+navigateur (`localStorage`) : rien n'est synchronisé entre eux.
 
 **En local :** ouvrir `index.html` dans un navigateur récent.
 
@@ -115,8 +117,10 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 
 | Fichier | Rôle |
 | --- | --- |
-| `index.html` | Structure des sept vues |
+| `index.html` | Structure des sept vues, sprite SVG des icônes de navigation |
 | `styles.css` | Mise en forme |
+| `favicon.svg` | Icône de l'onglet du navigateur |
+| `manifest.webmanifest`, `icons/` | Icône d'écran d'accueil (téléphone) et nom affiché en dessous |
 | `catalog.js` | Catalogue de départ et codifications connues |
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier, péremption des prix |
 | `app.js` | État, rendu, événements, imports/exports |
@@ -124,6 +128,14 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 
 `core.js` ne touche pas au DOM, ce qui rend la logique de chiffrage testable hors
 navigateur.
+
+## Thème clair / sombre / automatique
+
+Le sélecteur en bas de la barre latérale choisit entre les trois. « Automatique »
+(par défaut) suit le réglage du système d'exploitation, y compris s'il change pendant
+que l'application est ouverte. Un choix explicite est mémorisé dans une clé de
+`localStorage` séparée de celle des données de chiffrage — jamais touchée par
+« Tout réinitialiser » — et prime sur le système jusqu'à revenir sur « Automatique ».
 
 ## Version
 
