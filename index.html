@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Générateur de devis</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script src="catalog.js" defer></script>
+    <script src="core.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">GD</span>
+          <div>
+            <strong>Générateur de devis</strong>
+            <span>Chiffrage bâtiment</span>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Navigation principale">
+          <button class="nav-item active" data-view="dashboard" aria-current="page" type="button">Tableau de bord</button>
+          <button class="nav-item" data-view="ouvrages" type="button">Ouvrages</button>
+          <button class="nav-item" data-view="materiaux" type="button">Matériaux</button>
+          <button class="nav-item" data-view="devis" type="button">Devis client</button>
+          <button class="nav-item" data-view="metre" type="button">Métré public</button>
+          <button class="nav-item" data-view="settings" type="button">Paramètres</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Mémoire de chiffrage</p>
+            <h1 id="view-title">Tableau de bord</h1>
+          </div>
+          <div class="toolbar">
+            <button class="ghost" id="reload-catalog" type="button">Compléter le catalogue</button>
+            <button class="ghost danger" id="reset-all" type="button">Tout réinitialiser</button>
+            <label class="file-button">
+              Importer JSON
+              <input id="import-data" type="file" accept=".json" />
+            </label>
+            <button class="primary" id="export-data" type="button">Exporter les données</button>
+          </div>
+        </header>
+
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <!-- Tableau de bord ------------------------------------------------ -->
+        <section class="view active" id="dashboard">
+          <div class="kpis">
+            <article><span>Ouvrages</span><strong id="kpi-ouvrages">0</strong></article>
+            <article><span>Matériaux</span><strong id="kpi-materiaux">0</strong></article>
+            <article><span>Coefficient K</span><strong id="kpi-k">1,000</strong></article>
+            <article><span>Devis en cours HTVA</span><strong id="kpi-devis">0,00 €</strong></article>
+            <article><span>Postes non reconnus</span><strong id="kpi-alertes">0</strong></article>
+          </div>
+          <div class="split">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Prix calculés</h2>
+                <small>25 ouvrages les plus chers</small>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ouvrage</th>
+                      <th>Unité</th>
+                      <th>Prix de vente</th>
+                      <th>Main-d’œuvre</th>
+                      <th>Matières</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashboard-ouvrages"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Contrôle du dernier métré</h2>
+              </div>
+              <div id="alerts-list" class="alerts-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <!-- Ouvrages -------------------------------------------------------- -->
+        <section class="view" id="ouvrages">
+          <div class="editor-grid">
+            <form class="panel form-panel" id="ouvrage-form">
+              <div class="panel-head">
+                <h2 id="ouvrage-form-title">Ajouter un ouvrage</h2>
+              </div>
+              <label>Code interne<input name="poste" readonly tabindex="-1" /></label>
+              <label>Codes de métré reconnus
+                <input name="refsMetre" placeholder="03.02, 2.05" />
+                <small>Codes des cahiers des charges rattachés à cet ouvrage, séparés par des virgules.</small>
+              </label>
+              <label>Nom<input name="nom" required placeholder="Enduit de façade minéral armé" /></label>
+              <label>Unité<input name="unite" required placeholder="m2, m, pce, FF" /></label>
+              <label>Heures par unité<input name="heures" type="number" min="0" step="0.01" required /></label>
+              <label>Matériau principal<select name="materiau"></select></label>
+              <label>Quantité de matériau par unité<input name="quantiteMateriau" type="number" min="0" step="0.001" /></label>
+              <label>Matériel et accessoires par unité (€)<input name="materiel" type="number" min="0" step="0.01" /></label>
+              <label>Mots clés<input name="motsCles" placeholder="façade, crépi, enduit minéral" /></label>
+              <div class="form-actions">
+                <button class="primary" id="ouvrage-submit" type="submit">Enregistrer l’ouvrage</button>
+                <button class="ghost hidden" id="ouvrage-cancel-edit" type="button">Annuler</button>
+              </div>
+            </form>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Bibliothèque des ouvrages</h2>
+                <small id="ouvrages-count"></small>
+              </div>
+              <div class="duplicate-summary">
+                <h3>Doublons probables</h3>
+                <div id="ouvrage-duplicates" class="duplicate-list"></div>
+              </div>
+              <label class="search-field">Rechercher un ouvrage
+                <input id="ouvrage-search" type="search" placeholder="enduit, façade, 03.xx" />
+              </label>
+              <div id="ouvrages-list" class="cards-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <!-- Matériaux ------------------------------------------------------- -->
+        <section class="view" id="materiaux">
+          <div class="editor-grid">
+            <form class="panel form-panel" id="materiau-form">
+              <div class="panel-head">
+                <h2 id="materiau-form-title">Ajouter un matériau</h2>
+              </div>
+              <label>Nom<input name="nom" required placeholder="Enduit façade armé" /></label>
+              <label>Unité de prix<input name="unite" required placeholder="kg, litre, m2, pce" /></label>
+              <label>Fournisseur<input name="fournisseur" placeholder="Fournisseur habituel" /></label>
+              <label>Référence<input name="reference" placeholder="REF-2026" /></label>
+              <label>Conditionnement<input name="conditionnement" placeholder="Sac de 25 kg" /></label>
+              <label>Prix unitaire (€)<input name="prix" type="number" min="0" step="0.01" required /></label>
+              <label>Date du prix<input name="datePrix" type="date" /></label>
+              <div class="form-actions">
+                <button class="primary" id="materiau-submit" type="submit">Enregistrer le matériau</button>
+                <button class="ghost hidden" id="materiau-cancel-edit" type="button">Annuler</button>
+              </div>
+            </form>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Bibliothèque des matériaux</h2>
+                <small id="materiaux-count"></small>
+              </div>
+              <label class="search-field">Rechercher un matériau
+                <input id="materiau-search" type="search" placeholder="peinture, REF, fournisseur" />
+              </label>
+              <div id="materiaux-list" class="cards-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <!-- Paramètres ------------------------------------------------------ -->
+        <section class="view" id="settings">
+          <form class="panel form-panel settings-form" id="settings-form">
+            <div class="panel-head">
+              <h2>Paramètres</h2>
+            </div>
+            <div class="settings-section">
+              <h3>Entrepreneur</h3>
+              <label>Nom<input name="entrepreneur-nom" placeholder="Nom de l’entreprise" /></label>
+              <label>Adresse<textarea name="entrepreneur-adresse" rows="3" placeholder="Adresse complète"></textarea></label>
+              <label>Téléphone<input name="entrepreneur-tel" type="tel" placeholder="+32 ..." /></label>
+              <label>Email<input name="entrepreneur-email" type="email" placeholder="contact@entreprise.be" /></label>
+              <label>Numéro de TVA<input name="entrepreneur-numeroTva" placeholder="BE0123.456.789" /></label>
+            </div>
+            <div class="settings-section">
+              <h3>Calcul</h3>
+              <label>Coût horaire main-d’œuvre (€)<input name="coutHoraire" type="number" min="0" step="0.01" /></label>
+              <label class="range-field">
+                <span>Frais généraux <strong id="value-fraisGeneraux">0 %</strong></span>
+                <input name="fraisGeneraux" type="range" min="0" max="40" step="0.5" list="percent-steps" />
+              </label>
+              <label class="range-field">
+                <span>Frais de chantier <strong id="value-fraisChantier">0 %</strong></span>
+                <input name="fraisChantier" type="range" min="0" max="30" step="0.5" list="percent-steps" />
+              </label>
+              <label class="range-field">
+                <span>Imprévus <strong id="value-imprevus">0 %</strong></span>
+                <input name="imprevus" type="range" min="0" max="25" step="0.5" list="percent-steps" />
+              </label>
+              <label class="range-field">
+                <span>Marge <strong id="value-marge">0 %</strong></span>
+                <input name="marge" type="range" min="0" max="50" step="0.5" list="percent-steps" />
+              </label>
+              <datalist id="percent-steps">
+                <option value="0"></option>
+                <option value="10"></option>
+                <option value="20"></option>
+                <option value="30"></option>
+                <option value="40"></option>
+                <option value="50"></option>
+              </datalist>
+              <fieldset class="tax-field">
+                <legend>TVA par défaut</legend>
+                <label><input name="tva" type="radio" value="6" /> 6 %</label>
+                <label><input name="tva" type="radio" value="21" /> 21 %</label>
+              </fieldset>
+              <div class="coefficient-box">
+                <span>Coefficient K appliqué aux coûts directs</span>
+                <strong id="settings-k">1,000</strong>
+                <small id="settings-k-formula">K = 1 + 0 / 100</small>
+              </div>
+            </div>
+            <button class="primary" type="submit">Mettre à jour</button>
+          </form>
+        </section>
+
+        <!-- Devis client ---------------------------------------------------- -->
+        <section class="view" id="devis">
+          <div class="devis-layout">
+            <form class="panel form-panel" id="devis-meta-form">
+              <div class="panel-head">
+                <h2>Informations client</h2>
+                <button class="ghost" id="edit-devis-meta" type="button">Éditer</button>
+              </div>
+              <label>Client<input name="client" placeholder="Nom du client" /></label>
+              <label>Adresse du chantier<input name="adresse" placeholder="Rue, ville" /></label>
+              <label>Objet<textarea name="objet" rows="3" placeholder="Travaux de rénovation"></textarea></label>
+              <label>TVA (%)<input name="tva" type="number" min="0" step="0.1" /></label>
+              <button class="primary hidden" id="save-devis-meta" type="submit">Sauvegarder</button>
+            </form>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Lignes du devis</h2>
+              </div>
+              <form class="line-form" id="devis-line-form">
+                <select name="ouvrage" aria-label="Ouvrage"></select>
+                <input name="quantite" type="number" min="0" step="0.01" placeholder="Quantité" required aria-label="Quantité" />
+                <button class="primary" id="devis-line-submit" type="submit">Ajouter</button>
+                <button class="ghost hidden" id="devis-line-cancel-edit" type="button">Annuler</button>
+              </form>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ouvrage</th>
+                      <th>Quantité</th>
+                      <th>PU HTVA</th>
+                      <th>Total HTVA</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="devis-lines"></tbody>
+                </table>
+              </div>
+              <p class="warning-text" id="devis-warning"></p>
+              <div class="totals">
+                <div><span>Total HTVA</span><strong id="total-ht">0,00 €</strong></div>
+                <div><span>TVA</span><strong id="total-tva">0,00 €</strong></div>
+                <div><span>Total TVAC</span><strong id="total-ttc">0,00 €</strong></div>
+              </div>
+              <div class="form-actions">
+                <button class="primary" id="export-devis-xlsx" type="button">Exporter en Excel</button>
+                <button class="ghost" id="export-devis" type="button">Exporter en CSV</button>
+                <button class="ghost" id="export-devis-json" type="button">Exporter en JSON</button>
+                <label class="file-button">
+                  Importer un devis JSON
+                  <input id="import-devis-json" type="file" accept=".json" />
+                </label>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- Métré public ---------------------------------------------------- -->
+        <section class="view" id="metre">
+          <div class="metre-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>1. Importer le métré</h2>
+              </div>
+              <div class="upload-zone">
+                <input id="metre-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv" />
+                <p>Fichier Excel ou CSV du pouvoir adjudicateur. Les feuilles multiples sont lues, la feuille « récapitulatif » est ignorée.</p>
+              </div>
+              <p class="metre-status" id="metre-status">Aucun métré chargé.</p>
+
+              <div class="panel-head">
+                <h2>2. Vérifier les colonnes</h2>
+              </div>
+              <div class="field-map">
+                <label>Poste / numéro<select id="map-poste"></select></label>
+                <label>Désignation<select id="map-description"></select></label>
+                <label>Unité<select id="map-unite"></select></label>
+                <label>Quantité<select id="map-quantite"></select></label>
+                <label>Prix unitaire à compléter<select id="map-prix"></select></label>
+              </div>
+              <div class="form-actions">
+                <button class="primary" id="analyse-metre" type="button">Analyser le métré</button>
+                <button class="ghost" id="confirm-matches" type="button">Confirmer et mémoriser</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>3. Contrôler les correspondances</h2>
+              </div>
+
+              <div class="group-summary">
+                <h3>Regroupement par lot</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Lot</th>
+                        <th>Montant HTVA</th>
+                        <th>Chiffrés</th>
+                        <th>Unités</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metre-groups"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="group-summary missing-summary">
+                <h3>Postes à traiter</h3>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Famille probable</th>
+                        <th>Lot</th>
+                        <th>Nombre</th>
+                        <th>Quantités</th>
+                        <th>Postes</th>
+                      </tr>
+                    </thead>
+                    <tbody id="metre-missing-groups"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="table-wrap metre-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Poste</th>
+                      <th>Désignation</th>
+                      <th>Unité</th>
+                      <th>Quantité</th>
+                      <th>Ouvrage retenu</th>
+                      <th>Confiance</th>
+                      <th>Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody id="metre-lines"></tbody>
+                </table>
+              </div>
+
+              <div class="form-actions">
+                <button class="primary" id="export-metre-source" type="button">Compléter le fichier reçu</button>
+                <button class="ghost" id="export-metre-xlsx" type="button">Récapitulatif Excel</button>
+                <button class="ghost" id="export-metre" type="button">Récapitulatif CSV</button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

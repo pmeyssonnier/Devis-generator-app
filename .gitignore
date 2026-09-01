@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+
+# Metres reels utilises comme jeu d'essai local, non publies.
+METRE_*.xlsx
