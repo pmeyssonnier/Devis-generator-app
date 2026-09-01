@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Générateur de devis</title>
+    <meta name="theme-color" content="#0f7c6c" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <!-- Icone d'ecran d'accueil iOS : Safari ne lit ni le SVG ni le manifest pour ça. -->
+    <link rel="apple-touch-icon" href="icons/icon-180.png" />
+    <!-- Icones d'ecran d'accueil Android/Chrome, et nom affiche sous l'icone. -->
+    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="catalog.js" defer></script>
