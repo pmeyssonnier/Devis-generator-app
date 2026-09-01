@@ -10,7 +10,11 @@ le `localStorage` du poste.
 
 ## Démarrer
 
-Ouvrir `index.html` dans un navigateur récent.
+**En ligne :** https://pmeyssonnier.github.io/Devis-generator-app/ — utilisable depuis
+n'importe quel appareil, y compris un téléphone. Les données restent propres à chaque
+appareil et à chaque navigateur (`localStorage`) : rien n'est synchronisé entre eux.
+
+**En local :** ouvrir `index.html` dans un navigateur récent.
 
 Le premier lancement installe un catalogue de départ : 51 ouvrages et 38 matériaux
 couvrant les lots courants de rénovation, avec les codifications de métré déjà
@@ -66,14 +70,40 @@ absente ou nulle, poste présent plusieurs fois, unité incompatible, poste non 
 > restent disponibles sans lui. La mise en forme est préservée dans la limite de ce
 > que SheetJS sait réécrire.
 
+## Corriger la bibliothèque avec les chantiers réalisés
+
+Un devis repose sur des rendements estimés. La vue **Chantiers** sert à les confronter
+au travail réellement presté, puis à corriger la bibliothèque.
+
+1. **Créer un chantier** (nom, référence, date).
+2. **Relever les heures** par ouvrage : la quantité réalisée et le temps passé, saisi
+   comme il se compte sur le terrain — « 50 m² par 2 personnes pendant 7 heures » font
+   14 heures, soit 0,28 h/m². Le rendement prévu et le rendement constaté sont affichés
+   côte à côte, avec l'écart.
+3. **Relever les achats** : quantité facturée et montant payé, d'où le prix réellement
+   obtenu chez le fournisseur, comparé au prix de la bibliothèque.
+4. **Lire le bilan** : recette, coût direct prévu, coût direct réel, marge prévue et
+   marge réelle. Sans relevé d'achat, la marge réelle est signalée comme incomplète.
+5. **Recaler la bibliothèque** : le panneau de recalage cumule tous les chantiers
+   enregistrés et pondère par les quantités — un poste réalisé une fois sur 5 m² pèse
+   moins qu'un poste réalisé trois fois sur 400 m². Chaque correction est proposée avec
+   son écart, le volume sur lequel elle est observée et son effet sur le prix de vente.
+   Rien n'est corrigé automatiquement : l'entreprise applique ce qu'elle retient.
+
+Le tableau de bord compte les corrections en attente, c'est-à-dire les rendements et les
+prix qui s'écartent de plus de 5 % des relevés.
+
+Un relevé peut être corrigé directement dans son tableau. Supprimer un chantier retire
+ses relevés du recalage, mais laisse en place les corrections déjà appliquées.
+
 ## Organisation du code
 
 | Fichier | Rôle |
 | --- | --- |
-| `index.html` | Structure des six vues |
+| `index.html` | Structure des sept vues |
 | `styles.css` | Mise en forme |
 | `catalog.js` | Catalogue de départ et codifications connues |
-| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré |
+| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier |
 | `app.js` | État, rendu, événements, imports/exports |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
 
@@ -100,6 +130,9 @@ le devis en cours. C'est le seul moyen de transférer la mémoire de chiffrage d
   ses matériaux restent des lots groupés (« enduit, treillis et accessoires ») dont le
   prix n'est pas ventilé. L'application sait les décomposer : c'est un travail de saisie
   à faire au fil des prix réellement obtenus.
-- Les rendements ne sont pas encore recalés sur les heures réellement prestées : la
-  boucle « devis → chantier → correction de la bibliothèque » reste à construire.
+- Le forfait « matériel et accessoires » n'est pas relevé sur chantier : il est repris
+  tel quel dans le bilan, et compte donc à l'identique du côté prévu et du côté réel.
+- Le recalage remplace la valeur de la bibliothèque par la moyenne observée. Il ne
+  distingue pas encore un chantier atypique d'une dérive durable : c'est le volume
+  affiché en regard qui permet d'en juger.
 - Les prix des matériaux portent une date, mais aucune alerte de péremption n'est levée.
