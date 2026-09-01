@@ -103,8 +103,15 @@
               <label>Nom<input name="nom" required placeholder="Enduit de façade minéral armé" /></label>
               <label>Unité<input name="unite" required placeholder="m2, m, pce, FF" /></label>
               <label>Heures par unité<input name="heures" type="number" min="0" step="0.01" required /></label>
-              <label>Matériau principal<select name="materiau"></select></label>
-              <label>Quantité de matériau par unité<input name="quantiteMateriau" type="number" min="0" step="0.001" /></label>
+              <fieldset class="composants-field">
+                <legend>Matériaux par unité d’ouvrage</legend>
+                <div id="ouvrage-composants"></div>
+                <div class="composants-foot">
+                  <button class="ghost" id="ouvrage-add-composant" type="button">Ajouter un matériau</button>
+                  <span id="ouvrage-composants-total"></span>
+                </div>
+                <small>Un ouvrage peut combiner plusieurs fournitures : isolant, enduit, accessoires…</small>
+              </fieldset>
               <label>Matériel et accessoires par unité (€)<input name="materiel" type="number" min="0" step="0.01" /></label>
               <label>Mots clés<input name="motsCles" placeholder="façade, crépi, enduit minéral" /></label>
               <div class="form-actions">

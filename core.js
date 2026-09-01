@@ -241,12 +241,64 @@
     return 1 + coefficientPercent(settings) / 100;
   }
 
+  /*
+   * Un ouvrage reel combine plusieurs fournitures (isolant + enduit + accessoires).
+   * Il est donc decrit par une liste de composants { materiauId, quantite }, ou la
+   * quantite s'entend par unite d'ouvrage.
+   *
+   * Le modele historique ne portait qu'un materiau (materiauId + quantiteMateriau) :
+   * il est relu ici pour que les donnees deja enregistrees restent calculables.
+   */
+  function composantsOf(ouvrage) {
+    const declared = (Array.isArray(ouvrage?.composants) ? ouvrage.composants : [])
+      .map((composant) => ({
+        materiauId: String(composant?.materiauId ?? "").trim(),
+        quantite: Number(composant?.quantite) || 0,
+      }))
+      .filter((composant) => composant.materiauId);
+    if (declared.length) return declared;
+    const ancien = String(ouvrage?.materiauId ?? "").trim();
+    return ancien ? [{ materiauId: ancien, quantite: Number(ouvrage?.quantiteMateriau) || 0 }] : [];
+  }
+
+  // Accepte une fonction, une Map ou un tableau de materiaux — au choix de l'appelant.
+  function materialResolver(materiaux) {
+    if (typeof materiaux === "function") return materiaux;
+    if (materiaux instanceof Map) return (id) => materiaux.get(id);
+    if (Array.isArray(materiaux)) {
+      const byId = new Map(materiaux.map((materiau) => [materiau?.id, materiau]));
+      return (id) => byId.get(id);
+    }
+    return () => undefined;
+  }
+
+  // Chaque composant, prix resolu : c'est le detail affiche sous « Justifier ce prix ».
+  function composantsDetail(ouvrage, materiaux) {
+    const find = materialResolver(materiaux);
+    return composantsOf(ouvrage).map((composant) => {
+      const materiau = find(composant.materiauId);
+      const prix = Number(materiau?.prix) || 0;
+      return {
+        materiauId: composant.materiauId,
+        quantite: composant.quantite,
+        nom: materiau?.nom || "",
+        unite: materiau?.unite || "",
+        prix,
+        montant: composant.quantite * prix,
+        // Un materiau supprime laisse la reference en place : il faut le signaler
+        // plutot que de chiffrer silencieusement l'ouvrage a zero.
+        introuvable: !materiau,
+      };
+    });
+  }
+
   // Decomposition complete d'un prix de vente unitaire — sert aussi a le justifier.
-  function calculateOuvrage(ouvrage, settings, materiau) {
+  function calculateOuvrage(ouvrage, settings, materiaux) {
     const heures = Number(ouvrage?.heures) || 0;
     const coutHoraire = Number(settings?.coutHoraire) || 0;
     const mainOeuvre = heures * coutHoraire;
-    const matieres = (Number(ouvrage?.quantiteMateriau) || 0) * (Number(materiau?.prix) || 0);
+    const composants = composantsDetail(ouvrage, materiaux);
+    const matieres = composants.reduce((sum, composant) => sum + composant.montant, 0);
     const materiel = Number(ouvrage?.materiel) || 0;
     const direct = mainOeuvre + matieres + materiel;
     const k = coefficientK(settings);
@@ -254,6 +306,7 @@
       heures,
       coutHoraire,
       mainOeuvre,
+      composants,
       matieres,
       materiel,
       direct,
@@ -622,6 +675,9 @@
     roundMoney,
     coefficientPercent,
     coefficientK,
+    composantsOf,
+    materialResolver,
+    composantsDetail,
     calculateOuvrage,
     isInternalCode,
     classifyFamily,
