@@ -92,6 +92,13 @@ textarea {
   color: #fff;
 }
 
+.sidebar-version {
+  display: block;
+  margin-top: 18px;
+  color: #7c8b86;
+  font-size: 12px;
+}
+
 .main {
   padding: 28px;
   min-width: 0;
