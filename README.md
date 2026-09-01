@@ -16,7 +16,7 @@ appareil et à chaque navigateur (`localStorage`) : rien n'est synchronisé entr
 
 **En local :** ouvrir `index.html` dans un navigateur récent.
 
-Le premier lancement installe un catalogue de départ : 51 ouvrages et 38 matériaux
+Le premier lancement installe un catalogue de départ : 51 ouvrages et 61 matériaux
 couvrant les lots courants de rénovation, avec les codifications de métré déjà
 rencontrées. Ce catalogue n'est installé qu'une fois : les ouvrages supprimés ne
 reviennent pas au rechargement.
@@ -141,10 +141,11 @@ le devis en cours. C'est le seul moyen de transférer la mémoire de chiffrage d
 
 ## Limites connues
 
-- Le catalogue de départ ne déclare encore qu'une fourniture par ouvrage, et certains de
-  ses matériaux restent des lots groupés (« enduit, treillis et accessoires ») dont le
-  prix n'est pas ventilé. L'application sait les décomposer : c'est un travail de saisie
-  à faire au fil des prix réellement obtenus.
+- Les ouvrages du catalogue de départ combinant plusieurs fournitures (enduit, treillis
+  et accessoires ; cuvette, bâti et accessoires ; etc.) ont désormais des composants
+  séparés, mais leur répartition de prix reste indicative : elle a été estimée pour
+  préserver le prix groupé d'origine, pas relevée chez un fournisseur. À corriger au fil
+  des prix réellement obtenus.
 - Le forfait « matériel et accessoires » n'est pas relevé sur chantier : il est repris
   tel quel dans le bilan, et compte donc à l'identique du côté prévu et du côté réel.
 - Le recalage remplace la valeur de la bibliothèque par la moyenne observée. Il ne
