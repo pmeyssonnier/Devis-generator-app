@@ -153,7 +153,8 @@ GitHub Pages, que le navigateur affiche bien la dernière version.
 node --test test/core.test.js
 ```
 
-Aucune dépendance à installer.
+Aucune dépendance à installer. Le déploiement sur GitHub Pages exécute cette suite avant
+de publier : un commit qui la casse n'est pas mis en ligne.
 
 ## Sauvegarde
 

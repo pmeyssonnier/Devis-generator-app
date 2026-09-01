@@ -865,15 +865,60 @@
     return { rows, headers, skipped, headerIndex };
   }
 
+  /*
+   * Analyse caractere par caractere plutot qu'un simple split(separateur) : un champ
+   * entre guillemets peut contenir le separateur, des guillemets doubles ("") ou un
+   * retour a la ligne, comme dans 01.01;"Enduit, préparation comprise";m2;160.
+   */
   function parseDelimited(text) {
     const firstLine = text.split(/\r?\n/)[0] || "";
     const separator = [";", "\t", ","]
       .map((candidate) => ({ candidate, count: firstLine.split(candidate).length }))
       .sort((a, b) => b.count - a.count)[0].candidate;
-    return text
-      .split(/\r?\n/)
-      .filter((line) => line.trim())
-      .map((line) => line.split(separator).map((cell) => cell.trim().replace(/^"|"$/g, "")));
+
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let inQuotes = false;
+
+    const endCell = () => {
+      row.push(cell.trim());
+      cell = "";
+    };
+    const endRow = () => {
+      endCell();
+      rows.push(row);
+      row = [];
+    };
+
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+      if (inQuotes) {
+        if (char === '"' && text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else if (char === '"') {
+          inQuotes = false;
+        } else {
+          cell += char;
+        }
+        continue;
+      }
+      if (char === '"' && cell === "") {
+        inQuotes = true;
+      } else if (char === separator) {
+        endCell();
+      } else if (char === "\r") {
+        // ignore : les retours CRLF sont geres via le \n qui suit.
+      } else if (char === "\n") {
+        endRow();
+      } else {
+        cell += char;
+      }
+    }
+    if (cell !== "" || row.length) endRow();
+
+    return rows.filter((line) => line.some((cellValue) => cellValue !== ""));
   }
 
   root.DGCore = {
