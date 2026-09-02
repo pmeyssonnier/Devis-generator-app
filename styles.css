@@ -443,6 +443,27 @@ textarea {
   padding: 11px 12px;
   color: var(--ink);
   background: var(--panel);
+  /* Les libelles sont en 700 et les champs heritaient de cette graisse : « 03.02,
+     2.05 » (exemple) et « Enduit de façade » (valeur reelle) s'affichaient a
+     l'identique. Une valeur saisie se lit en graisse normale. */
+  font-weight: 400;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* Champ obligatoire : marque dans le libelle, pas seulement au moment de valider. */
+.required-mark {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.form-legend {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 input[type="range"] {
@@ -1497,5 +1518,150 @@ tr.flag-detail-row.danger td {
 
   .metre-table td.empty::before {
     display: none;
+  }
+}
+
+/* --------------------------------------------- cibles tactiles (S3, U7) */
+
+/*
+ * Doigt plutôt que souris : les commandes de 14 à 34 px se rataient une fois sur
+ * deux. On étend la zone cliquable à 44 px sans grossir la pastille elle-même, qui
+ * alourdirait le tableau — et seulement sur écran tactile, où un carré invisible ne
+ * risque pas de voler le clic d'un voisin.
+ */
+@media (pointer: coarse) {
+  .flag,
+  .info-toggle {
+    position: relative;
+  }
+
+  .flag::after,
+  .info-toggle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  .edit-button,
+  .delete-button,
+  .theme-toggle button,
+  .toast-close {
+    min-height: 44px;
+  }
+
+  .toast-close {
+    width: 44px;
+  }
+
+  /* Boutons d'action d'une ligne de métré : 11 px de texte, donc ~24 px de haut. */
+  .apply-suggestion,
+  .create-ouvrage {
+    min-height: 44px;
+  }
+
+  /* Cases et boutons radio des réglages : 13 px de côté par défaut. */
+  input[type="radio"],
+  input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--accent);
+  }
+
+  .tax-field label {
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .breakdown summary,
+  .duplicate-summary summary {
+    padding: 12px 0;
+  }
+}
+
+/* ------------------------------------------------ boîte de dialogue (S3, U9) */
+
+.app-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: min(80vh, 760px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.app-dialog::backdrop {
+  background: rgba(10, 18, 16, 0.5);
+}
+
+.app-dialog form {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+.app-dialog h2 {
+  margin: 0;
+  padding: 18px 18px 12px;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.dialog-body {
+  overflow-y: auto;
+  padding: 0 18px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dialog-body p {
+  margin: 0 0 10px;
+}
+
+.dialog-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+
+.dialog-body th,
+.dialog-body td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+/* Seules les colonnes de chiffres sont alignees a droite et insecables : appliquer
+   la regle a « toute colonne sauf la premiere » coupait les noms d'ouvrages. */
+.dialog-body td.num,
+.dialog-body th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dialog-body .change {
+  color: var(--warn-soft-ink);
+  background: var(--warn-soft-bg);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 620px) {
+  .dialog-actions button {
+    flex: 1;
   }
 }

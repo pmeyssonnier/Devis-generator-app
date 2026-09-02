@@ -70,31 +70,18 @@
 
   /* ------------------------------------------------------------------- etat */
 
-  function emptyMetre() {
-    // analysedCommune : la commune effectivement utilisee par la derniere analyse. C'est
-    // elle, et non le champ de saisie (modifiable a tout moment), qui decide sous quel
-    // profil les confirmations sont memorisees — les lignes ont ete rapprochees avec
-    // sa table de codes, elles doivent y retourner.
-    return { fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
-  }
-
-  function blankState() {
-    return {
-      version: 2,
-      catalogVersion: 0,
-      settings: { ...CATALOG.defaultSettings },
-      entrepreneur: { ...CATALOG.defaultEntrepreneur },
-      materiaux: [],
-      ouvrages: [],
-      devis: { ...CATALOG.defaultDevis, lignes: [] },
-      chantiers: [],
-      metre: emptyMetre(),
-      // Codes de metre appris, par commune : { commune: { code: ouvrageId } }. Un code
-      // reste propre a la commune qui l'a produit, contrairement au refsMetre du
-      // catalogue (partage entre tous les marches).
-      mappingCommunes: {},
-    };
-  }
+  // Etat et migration vivent dans core.js : sans DOM, donc testables. app.js ne
+  // garde que le branchement sur le catalogue et la generation d'identifiants.
+  const emptyMetre = () => C.emptyMetre();
+  const blankState = () => C.blankState(CATALOG);
+  const normalizeState = (source) =>
+    C.normalizeState(source, {
+      catalog: CATALOG,
+      uid,
+      // Cas rare (donnees anciennes deja incoherentes) : pas de UI dediee, mais au
+      // moins une trace pour qui regarde la console.
+      onWarning: (message) => console.warn(message),
+    });
 
   function loadState() {
     let raw = "";
@@ -144,132 +131,6 @@
         return false;
       }
     }
-  }
-
-  // Remet l'etat dans une forme coherente, quelle que soit son origine.
-  function normalizeState(source) {
-    const next = { ...blankState(), ...source };
-    next.settings = { ...CATALOG.defaultSettings, ...(source.settings || {}) };
-    next.entrepreneur = { ...CATALOG.defaultEntrepreneur, ...(source.entrepreneur || {}) };
-    next.materiaux = (source.materiaux || []).map((materiau) => ({
-      id: materiau.id || uid(),
-      nom: materiau.nom || "",
-      unite: materiau.unite || "",
-      fournisseur: materiau.fournisseur || "",
-      reference: materiau.reference || "",
-      conditionnement: materiau.conditionnement || "",
-      prix: Number(materiau.prix) || 0,
-      datePrix: materiau.datePrix || "",
-    }));
-
-    const usedCodes = new Set();
-    next.ouvrages = (source.ouvrages || []).map((ouvrage) => {
-      const previousCode = String(ouvrage.poste || "").trim();
-      const nom = C.stripLeadingCode(ouvrage.nom);
-      const refs = C.normalizeRefList([ouvrage.refsMetre || ouvrage.referencesMetre || [], previousCode]);
-      const code = C.isInternalCode(previousCode) && !usedCodes.has(previousCode)
-        ? previousCode
-        : C.nextInternalCode(usedCodes, nom);
-      usedCodes.add(code);
-      return {
-        id: ouvrage.id || uid(),
-        poste: code,
-        refsMetre: refs,
-        nom,
-        unite: ouvrage.unite || "",
-        heures: Number(ouvrage.heures) || 0,
-        // composantsOf relit aussi l'ancien couple materiauId / quantiteMateriau :
-        // les bibliotheques deja enregistrees sont migrees a la lecture.
-        composants: C.composantsOf(ouvrage),
-        materiel: Number(ouvrage.materiel) || 0,
-        motsCles: C.normalizeKeywords([ouvrage.motsCles, refs.join(", ")]),
-      };
-    });
-
-    const ouvrageIds = new Set(next.ouvrages.map((ouvrage) => ouvrage.id));
-    next.mappingCommunes = {};
-    const conflitsMigration = [];
-    Object.entries(source.mappingCommunes || {}).forEach(([commune, codes]) => {
-      const communeKey = String(commune || "").trim();
-      if (!communeKey || !codes || typeof codes !== "object") return;
-      // "Schaerbeek" / "schaerbeek" / "SCHAERBEEK" fusionnent dans le premier profil
-      // rencontré, au lieu de rester des communes distinctes (donnees anciennes ou
-      // deja importees avant cette normalisation).
-      const normalise = C.normalizeText(communeKey);
-      const cleKey = Object.keys(next.mappingCommunes).find((key) => C.normalizeText(key) === normalise) || communeKey;
-      const clean = next.mappingCommunes[cleKey] || {};
-      Object.entries(codes).forEach(([code, ouvrageId]) => {
-        const codeKey = C.normalizeRef(code);
-        // Un ouvrage supprime depuis emporte son mapping communal : sinon un code
-        // pointerait vers un id qui n'existe plus, invisible jusqu'au prochain import.
-        if (!codeKey || typeof ouvrageId !== "string" || !ouvrageIds.has(ouvrageId)) return;
-        if (clean[codeKey] && clean[codeKey] !== ouvrageId) {
-          // Deux profils fusionnes (ex. "Schaerbeek"/"schaerbeek") portaient une
-          // correspondance differente pour le meme code : on garde la premiere
-          // rencontree plutot que d'ecraser silencieusement, et on le signale.
-          conflitsMigration.push(`${codeKey} (commune « ${cleKey} »)`);
-          return;
-        }
-        clean[codeKey] = ouvrageId;
-      });
-      if (Object.keys(clean).length) next.mappingCommunes[cleKey] = clean;
-    });
-    if (conflitsMigration.length) {
-      // Cas rare (donnees anciennes deja incoherentes) : pas de UI dediee pour
-      // l'instant, mais au moins visible pour qui regarde la console au lieu de
-      // disparaitre sans trace.
-      console.warn(
-        `Conflit détecté pendant la fusion des communes homonymes : ${conflitsMigration.join(", ")}. ` +
-          "La première correspondance rencontrée a été conservée.",
-      );
-    }
-
-    const devis = source.devis || {};
-    next.devis = {
-      client: devis.client || "",
-      adresse: devis.adresse || "",
-      objet: devis.objet || "",
-      // 0 % est une valeur legitime (regime cocontractant, courant en marche public) :
-      // « || 21 » la remettait a 21 a chaque rechargement.
-      tva: Number.isFinite(Number(devis.tva)) && devis.tva !== null && devis.tva !== "" ? Number(devis.tva) : Number(next.settings.tva) || 21,
-      lignes: (devis.lignes || []).map((ligne) => ({
-        id: ligne.id || uid(),
-        ouvrageId: ligne.ouvrageId || "",
-        quantite: Number(ligne.quantite) || 0,
-      })),
-    };
-
-    // Releves de chantier : ce qui a reellement ete preste et achete.
-    next.chantiers = (source.chantiers || []).map((chantier) => ({
-      id: chantier.id || uid(),
-      nom: chantier.nom || "",
-      reference: chantier.reference || "",
-      date: chantier.date || "",
-      mainOeuvre: (chantier.mainOeuvre || []).map((releve) => ({
-        id: releve.id || uid(),
-        ouvrageId: releve.ouvrageId || "",
-        quantite: Number(releve.quantite) || 0,
-        personnes: Number(releve.personnes) || 1,
-        duree: Number(releve.duree) || 0,
-      })),
-      achats: (chantier.achats || []).map((achat) => ({
-        id: achat.id || uid(),
-        materiauId: achat.materiauId || "",
-        quantite: Number(achat.quantite) || 0,
-        montant: Number(achat.montant) || 0,
-      })),
-    }));
-
-    next.metre = { ...emptyMetre(), ...(source.metre || {}) };
-    next.metre.analysed = (next.metre.analysed || []).map((row) => ({ ...row, poste: row.poste || row.numero }));
-    // Session analysee avant l'apparition d'analysedCommune : la commune saisie etait
-    // alors la seule reference, on la reprend pour ne pas basculer ces lignes vers le
-    // refsMetre global au moment de les confirmer.
-    if ((source.metre || {}).analysedCommune === undefined && next.metre.analysed.length) {
-      next.metre.analysedCommune = String(next.metre.commune || "").trim();
-    }
-    if (![6, 21].includes(Number(next.settings.tva))) next.settings.tva = 21;
-    return next;
   }
 
   /*
@@ -369,6 +230,28 @@
     // Une erreur demande de lire puis d'agir : elle reste deux fois plus longtemps
     // qu'une simple confirmation, et se ferme d'un clic dans tous les cas.
     notifyTimer = setTimeout(() => zone.classList.remove("visible"), kind === "info" || !kind ? 6000 : 12000);
+  }
+
+  /*
+   * Remplace window.confirm pour les decisions qui demandent de lire un tableau : le
+   * dialogue natif d'Android affiche un bloc de texte tronque, sans colonnes ni
+   * alignement. Repli sur window.confirm si <dialog> n'est pas disponible.
+   */
+  function askDialog({ titre, corpsHtml, corpsTexte, ok = "Confirmer", annuler = "Annuler" }) {
+    const dialog = $("#app-dialog");
+    if (!dialog || typeof dialog.showModal !== "function") {
+      return Promise.resolve(window.confirm(`${titre}\n\n${corpsTexte || ""}`));
+    }
+    $("#app-dialog-title").textContent = titre;
+    $("#app-dialog-body").innerHTML = corpsHtml;
+    $("#app-dialog-ok").textContent = ok;
+    $("#app-dialog-cancel").textContent = annuler;
+    return new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+      dialog.returnValue = "annuler";
+      dialog.showModal();
+      $("#app-dialog-body").scrollTop = 0;
+    });
   }
 
   function hideToast() {
@@ -1228,15 +1111,17 @@
       ? analysed
           .map((row, index) => {
             const prix = metreRowPrice(row);
-            const classes = [];
             // Une seule couleur par ligne : rouge quand rien n'est chiffrable en
-            // l'etat, ambre quand seule la quantite manque. Un poste "pour memoire"
-            // n'est pas une anomalie, quel que soit son etat.
-            if (row.pourMemoire && !row.unitWarning) {
-              /* statut normal de ce type de poste */
-            } else if (row.unitWarning || !row.ouvrageId) classes.push("row-missing");
-            else if (!row.quantiteOk) classes.push("row-warning");
-            return `<tr class="${classes.join(" ")}">
+            // l'etat, ambre quand seule la quantite manque, rien pour un poste
+            // "pour memoire". L'etat lui-meme est defini dans core.metreRowStatus.
+            const statut = C.metreRowStatus(row, Boolean(ouvrageById(row.ouvrageId)));
+            const classe =
+              statut === "unite-incompatible" || statut === "ouvrage-manquant"
+                ? "row-missing"
+                : statut === "quantite-manquante"
+                  ? "row-warning"
+                  : "";
+            return `<tr class="${classe}">
               <td data-label="Poste" class="compact">${esc(row.numero)}</td>
               <td data-label="Désignation">${esc(row.description)}</td>
               <td data-label="Unité" class="compact">${esc(row.unite)}${
@@ -1426,13 +1311,6 @@
     });
   }
 
-  function columnIndex(row, headerName, candidates) {
-    const cols = row.__cols || {};
-    if (headerName && cols[headerName] !== undefined) return cols[headerName];
-    const fallback = C.findHeader(Object.keys(cols), candidates);
-    return fallback ? cols[fallback] : undefined;
-  }
-
   function analyseMetre() {
     if (!state.metre.rows.length) {
       notify("Chargez d’abord un métré.", "danger");
@@ -1441,83 +1319,15 @@
     const mapping = mappingSelectors();
     state.metre.mapping = mapping;
 
-    const alerts = [];
-    const cache = new Map();
-    const seenCodes = new Map();
     const commune = String(state.metre.commune || "").trim();
     // Objet (meme vide) des qu'une commune est renseignee : signale a findMatch()
     // qu'aucun retour au refsMetre global n'est autorise pour cet import, meme si
     // cette commune n'a encore aucun code appris.
-    const communeCodes = commune ? state.mappingCommunes[resolveCommuneKey(commune)] || {} : null;
+    const communeCodes = commune ? state.mappingCommunes[C.resolveCommuneKey(state.mappingCommunes, commune)] || {} : null;
     state.metre.analysedCommune = commune;
 
-    state.metre.analysed = state.metre.rows.map((raw, index) => {
-      // rowField : chaque feuille garde ses propres en-tetes ; le mapping global ne
-      // vaut que pour l'une d'elles, les autres sont resolues ligne par ligne.
-      const champ = (cle) => C.rowField(raw, mapping[cle], C.HEADER_CANDIDATES[cle]);
-      const numeroLu = String(champ("poste") ?? "").trim();
-      // Sans numero dans le fichier, on en fabrique un pour l'affichage seulement : il
-      // ne doit jamais etre appris ni recherche comme code (cf. findMatch/learnMatch).
-      const numeroSynthetique = !numeroLu;
-      const numero = numeroLu || String(index + 1);
-      const description = String(champ("description") ?? "").trim();
-      const unite = String(champ("unite") ?? "").trim();
-      const quantite = C.parseNumber(champ("quantite"));
-      const quantiteOk = Number.isFinite(quantite) && quantite > 0;
-      // Un poste "pour memoire"/"hors marche" n'a normalement ni quantite ni prix a
-      // chiffrer : ce n'est pas une anomalie a signaler comme les autres.
-      const pourMemoire = C.isPourMemoire(description);
-      const base = {
-        numero,
-        poste: numero,
-        numeroSynthetique,
-        description,
-        unite,
-        quantite: quantiteOk ? quantite : 0,
-        quantiteOk,
-        pourMemoire,
-      };
-      const match = C.findMatch(base, state.ouvrages, cache, communeCodes);
-
-      const label = `Poste ${numero}`;
-      if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
-      if (!quantiteOk && !pourMemoire) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
-      if (!match.ouvrageId && match.unitWarning) {
-        alerts.push({
-          type: "danger",
-          message: `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
-        });
-      } else if (!match.ouvrageId && !pourMemoire) {
-        alerts.push({ type: "warning", message: `${label} : aucun ouvrage reconnu pour « ${description} ».` });
-      } else if (match.unitWarning) {
-        // Filet de securite : ne devrait plus se produire (findMatch et le choix manuel
-        // bloquent deja l'unite incompatible), mais garde le message si un cas restait.
-        alerts.push({
-          type: "danger",
-          message: `${label} : unité « ${unite} » incompatible avec l’ouvrage retenu.`,
-        });
-      }
-      const codeKey = numeroSynthetique ? "" : C.normalizeRef(numero);
-      if (codeKey) {
-        if (seenCodes.has(codeKey)) alerts.push({ type: "warning", message: `${label} : code présent plusieurs fois.` });
-        seenCodes.set(codeKey, true);
-      }
-
-      return {
-        ...base,
-        lot: raw.__lot || raw.__sheet || "",
-        ouvrageId: match.ouvrageId,
-        confidence: match.confidence,
-        reason: match.reason,
-        unitWarning: match.unitWarning,
-        suggestionId: match.suggestionId,
-        manual: false,
-        sheet: raw.__sheet || "",
-        rowIndex: raw.__row,
-        puCol: columnIndex(raw, mapping.prixUnitaire, C.HEADER_CANDIDATES.prixUnitaire),
-      };
-    });
-
+    const { analysed, alerts } = C.analyseRows(state.metre.rows, mapping, state.ouvrages, communeCodes);
+    state.metre.analysed = analysed;
     state.metre.alerts = alerts;
     saveState();
     render();
@@ -1537,91 +1347,55 @@
     return C.normalizeText(state.metre.commune || "") !== C.normalizeText(state.metre.analysedCommune || "");
   }
 
-  // "Schaerbeek", "schaerbeek", "SCHAERBEEK" ne doivent pas devenir trois profils
-  // distincts : on reutilise la clef deja enregistree qui correspond une fois
-  // normalisee, sinon on cree une nouvelle clef avec la casse telle que tapee.
-  function resolveCommuneKey(commune) {
-    const saisie = String(commune || "").trim();
-    if (!saisie) return "";
-    const cle = C.normalizeText(saisie);
-    const existante = Object.keys(state.mappingCommunes).find((key) => C.normalizeText(key) === cle);
-    return existante || saisie;
-  }
-
   // Enregistre la correspondance choisie : elle sera reconnue au prochain marche.
-  function learnMatch(row) {
-    const ouvrage = ouvrageById(row.ouvrageId);
-    // Filet de securite : ne jamais memoriser un rapprochement dont l'unite ne
-    // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
-    // Un numero synthetique (ligne sans N°) n'est pas un code : rien a memoriser.
-    if (!ouvrage || !row.numero || row.unitWarning || row.numeroSynthetique) return;
-    const key = C.normalizeRef(row.numero);
-    if (!key) return;
-    // Commune de l'analyse, pas celle du champ : si l'utilisateur a change le champ
-    // sans relancer l'analyse, les lignes ont ete rapprochees (et donc validees) avec
-    // la table de l'ancienne commune — les memoriser ailleurs melangerait les profils.
-    const commune = String(state.metre.analysedCommune || "").trim();
-    if (commune) {
-      // Rattache le code a cette commune uniquement : deux communes qui reutilisent
-      // coincidemment le meme numero de poste pour des ouvrages differents ne
-      // s'ecrasent plus l'une l'autre (contrairement au refsMetre global ci-dessous,
-      // qui reste partage entre tous les marches).
-      const communeKey = resolveCommuneKey(commune);
-      if (!state.mappingCommunes[communeKey]) state.mappingCommunes[communeKey] = {};
-      state.mappingCommunes[communeKey][key] = ouvrage.id;
-      return;
-    }
-    // Aucune commune renseignee : comportement historique, sur le refsMetre global.
-    // Un code de metre ne doit jamais designer deux ouvrages a la fois : sinon le
-    // prochain chiffrage redevient arbitraire (le premier ouvrage trouve l'emporte).
-    state.ouvrages.forEach((other) => {
-      if (other.id === ouvrage.id) return;
-      if (other.refsMetre.some((ref) => C.normalizeRef(ref) === key)) {
-        other.refsMetre = other.refsMetre.filter((ref) => C.normalizeRef(ref) !== key);
-      }
-    });
-    const before = ouvrage.refsMetre.length;
-    ouvrage.refsMetre = C.normalizeRefList([ouvrage.refsMetre, row.numero]);
-    if (ouvrage.refsMetre.length !== before) {
-      ouvrage.motsCles = C.normalizeKeywords([ouvrage.motsCles, row.numero]);
-    }
-  }
+  // La regle (commune de l'analyse, un code pour un seul ouvrage) est dans core.js.
+  const learnMatch = (row) => C.memoriserCode(state, row);
 
   // Seuil a partir duquel un ouvrage existant est propose avant d'en creer un nouveau.
   const SIMILARITE_OUVRAGE_SEUIL = 0.55;
 
-  function decrireProximiteOuvrage(payload, match) {
+  /*
+   * Ce qui separe l'ouvrage saisi de celui qui existe deja, signal par signal puis
+   * matiere par matiere. Presente en tableau : le detail d'une composition sur dix
+   * lignes n'etait pas lisible dans un dialogue natif.
+   */
+  function proximiteOuvrageHtml(payload, match) {
     const pct = (valeur) => (valeur === null || valeur === undefined ? "—" : `${Math.round(valeur * 100)} %`);
     const d = match.detail;
-    const lignes = [
-      `Un ouvrage proche existe déjà dans la bibliothèque : « ${match.ouvrage.nom} » (${match.ouvrage.poste}).`,
-      `Proximité globale : ${pct(match.score)}`,
-      `  Libellé      : ${pct(d.textScore)}`,
-      `  Composition  : ${pct(d.composantScore)}`,
-      `  Rendement    : ${pct(d.rendementScore)}`,
-      `  Matériel     : ${pct(d.materielScore)}`,
-      "",
-      "Composition — existant → saisi :",
+    const signaux = [
+      ["Libellé", d.textScore],
+      ["Composition", d.composantScore],
+      ["Rendement", d.rendementScore],
+      ["Matériel", d.materielScore],
     ];
+
     const existant = new Map((match.ouvrage.composants || []).map((c) => [c.materiauId, c.quantite]));
     const saisi = new Map((payload.composants || []).map((c) => [c.materiauId, c.quantite]));
-    const tousMateriaux = new Set([...existant.keys(), ...saisi.keys()]);
-    if (tousMateriaux.size) {
-      tousMateriaux.forEach((id) => {
-        const nom = materialById(id)?.nom || "matériau inconnu";
-        const a = existant.has(id) ? number.format(existant.get(id)) : "—";
-        const b = saisi.has(id) ? number.format(saisi.get(id)) : "—";
-        lignes.push(`  · ${nom} : ${a} → ${b}`);
-      });
-    } else {
-      lignes.push("  (aucun composant des deux côtés)");
-    }
-    lignes.push(`  · Main-d’œuvre (h/${payload.unite || "unité"}) : ${number.format(match.ouvrage.heures)} → ${number.format(payload.heures)}`);
-    lignes.push(`  · Matériel : ${euro.format(match.ouvrage.materiel)} → ${euro.format(payload.materiel)}`);
-    lignes.push("");
-    lignes.push("OK : utiliser l’ouvrage existant, rien de nouveau n’est créé.");
-    lignes.push("Annuler : créer quand même ce nouvel ouvrage.");
-    return lignes.join("\n");
+    const tousMateriaux = [...new Set([...existant.keys(), ...saisi.keys()])];
+    const lignes = tousMateriaux.map((id) => {
+      const a = existant.has(id) ? number.format(existant.get(id)) : "—";
+      const b = saisi.has(id) ? number.format(saisi.get(id)) : "—";
+      return [materialById(id)?.nom || "matériau inconnu", a, b];
+    });
+    lignes.push([`Main-d’œuvre (h/${payload.unite || "unité"})`, number.format(match.ouvrage.heures), number.format(payload.heures)]);
+    lignes.push(["Matériel", euro.format(match.ouvrage.materiel), euro.format(payload.materiel)]);
+
+    return `
+      <p>Un ouvrage proche existe déjà : <strong>${esc(match.ouvrage.nom)}</strong> (${esc(match.ouvrage.poste)}).
+      Proximité globale <strong>${pct(match.score)}</strong>.</p>
+      <table>
+        <thead><tr><th>Signal</th><th class="num">Proximité</th></tr></thead>
+        <tbody>${signaux.map(([nom, valeur]) => `<tr><td>${nom}</td><td class="num">${pct(valeur)}</td></tr>`).join("")}</tbody>
+      </table>
+      <table>
+        <thead><tr><th>Composition</th><th class="num">Existant</th><th class="num">Saisi</th></tr></thead>
+        <tbody>${lignes
+          .map(
+            ([nom, a, b]) =>
+              `<tr class="${a === b ? "" : "change"}"><td>${esc(nom)}</td><td class="num">${esc(a)}</td><td class="num">${esc(b)}</td></tr>`,
+          )
+          .join("")}</tbody>
+      </table>`;
   }
 
   // Rattache le poste de metre a l'origine de "Créer un ouvrage à partir de ce poste"
@@ -1807,15 +1581,7 @@
             utilisable ? C.roundMoney(row.confidence) : "",
             utilisable ? C.roundMoney(priceOf(ouvrage).vente) : "",
             C.roundMoney(metreRowPrice(row)),
-            row.unitWarning
-              ? "Unité incompatible"
-              : !ouvrage
-                ? row.pourMemoire
-                  ? "Pour mémoire"
-                  : "Ouvrage manquant"
-                : row.quantiteOk
-                  ? "OK"
-                  : "Quantité à vérifier",
+            C.METRE_STATUS_LABELS[C.metreRowStatus(row, Boolean(ouvrage))],
           ];
         }),
       ],
@@ -1950,9 +1716,10 @@
     notify("Matériau enregistré.", "info");
   });
 
-  $("#ouvrage-form").addEventListener("submit", (event) => {
+  $("#ouvrage-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const formulaire = event.currentTarget;
+    const data = Object.fromEntries(new FormData(formulaire));
     const refs = C.normalizeRefList([data.refsMetre]);
     const payload = {
       nom: C.stripLeadingCode(data.nom),
@@ -1970,13 +1737,20 @@
     if (!editingOuvrageId) {
       const match = C.bestOuvrageMatch(payload, state.ouvrages);
       if (match && match.score >= SIMILARITE_OUVRAGE_SEUIL) {
-        if (window.confirm(decrireProximiteOuvrage(payload, match))) {
+        const reutiliser = await askDialog({
+          titre: "Un ouvrage très proche existe déjà",
+          corpsHtml: proximiteOuvrageHtml(payload, match),
+          corpsTexte: `« ${match.ouvrage.nom} » — proximité ${Math.round(match.score * 100)} %.`,
+          ok: "Utiliser l’existant",
+          annuler: "Créer quand même",
+        });
+        if (reutiliser) {
           // Le libelle de cette commune (et ses mots cles) enrichissent l'ouvrage
           // conserve : la prochaine fois que cette formulation revient — autre lot,
           // code different — le rapprochement par libelle la reconnaitra d'emblee.
           match.ouvrage.motsCles = C.normalizeKeywords([match.ouvrage.motsCles, payload.motsCles, payload.nom]);
           const lien = linkCreatedOuvrageToMetreRow(match.ouvrage.id);
-          event.currentTarget.reset();
+          formulaire.reset();
           setComposantRows([]);
           updateEditForms();
           saveState();
@@ -2008,7 +1782,7 @@
       state.ouvrages.push({ id: savedId, poste: C.nextInternalCode(usedCodes, payload.nom), ...payload });
     }
     const lien = linkCreatedOuvrageToMetreRow(savedId);
-    event.currentTarget.reset();
+    formulaire.reset();
     setComposantRows([]);
     updateEditForms();
     saveState();
@@ -2318,15 +2092,7 @@
         ? `Supprimer « ${ouvrage?.nom} » ? ${avertissements.join(" et ")} y font référence.`
         : `Supprimer « ${ouvrage?.nom} » ?`;
       if (!window.confirm(message)) return;
-      state.ouvrages = state.ouvrages.filter((item) => item.id !== data.deleteOuvrage);
-      state.metre.analysed.forEach((row) => {
-        if (row.ouvrageId === data.deleteOuvrage) row.ouvrageId = "";
-      });
-      Object.values(state.mappingCommunes).forEach((codes) => {
-        Object.keys(codes).forEach((code) => {
-          if (codes[code] === data.deleteOuvrage) delete codes[code];
-        });
-      });
+      C.supprimerOuvrage(state, data.deleteOuvrage);
       if (editingOuvrageId === data.deleteOuvrage) editingOuvrageId = "";
     } else if (data.deleteLigne) {
       state.devis.lignes = state.devis.lignes.filter((ligne) => ligne.id !== data.deleteLigne);
@@ -2351,27 +2117,7 @@
     );
     if (!confirmed) return;
 
-    target.refsMetre = C.normalizeRefList([target.refsMetre, source.refsMetre]);
-    target.motsCles = C.normalizeKeywords([target.motsCles, source.motsCles]);
-    Object.values(state.mappingCommunes).forEach((codes) => {
-      Object.keys(codes).forEach((code) => {
-        if (codes[code] === fromId) codes[code] = toId;
-      });
-    });
-    state.devis.lignes.forEach((ligne) => {
-      if (ligne.ouvrageId === fromId) ligne.ouvrageId = toId;
-    });
-    state.metre.analysed.forEach((row) => {
-      if (row.ouvrageId === fromId) row.ouvrageId = toId;
-    });
-    // Sans ce transfert, l'historique de chantier de l'ouvrage fusionné ne recale
-    // plus jamais rien : il reste attache a un id qui n'existe plus apres la fusion.
-    state.chantiers.forEach((chantier) => {
-      chantier.mainOeuvre.forEach((releve) => {
-        if (releve.ouvrageId === fromId) releve.ouvrageId = toId;
-      });
-    });
-    state.ouvrages = state.ouvrages.filter((ouvrage) => ouvrage.id !== fromId);
+    C.fusionnerOuvrages(state, fromId, toId);
     if (editingOuvrageId === fromId) {
       editingOuvrageId = "";
       $("#ouvrage-form").reset();
@@ -2521,13 +2267,34 @@
     render();
   });
 
-  $("#confirm-matches").addEventListener("click", () => {
+  $("#confirm-matches").addEventListener("click", async () => {
     const proposals = state.metre.analysed.filter((row) => row.ouvrageId && !row.manual);
     if (!proposals.length) {
       notify("Aucune proposition à confirmer.", "info");
       return;
     }
-    if (!window.confirm(`Confirmer ${proposals.length} correspondance(s) ? Les codes de métré seront mémorisés.`)) return;
+    // On memorise des codes pour les marches suivants : il faut voir lesquels, et
+    // vers quel ouvrage, avant de valider — pas seulement leur nombre.
+    const commune = String(state.metre.analysedCommune || "").trim();
+    const confirme = await askDialog({
+      titre: `Mémoriser ${proposals.length} correspondance(s) ?`,
+      corpsHtml: `
+        <p>Ces codes seront reconnus d’emblée ${
+          commune ? `au prochain marché de <strong>${esc(commune)}</strong>` : "sur les prochains marchés"
+        }.</p>
+        <table>
+          <thead><tr><th>Poste</th><th>Ouvrage</th></tr></thead>
+          <tbody>${proposals
+            .map(
+              (row) =>
+                `<tr><td>${esc(row.numero)}</td><td>${esc(ouvrageById(row.ouvrageId)?.nom || "")}</td></tr>`,
+            )
+            .join("")}</tbody>
+        </table>`,
+      corpsTexte: `${proposals.length} correspondance(s). Les codes de métré seront mémorisés.`,
+      ok: "Mémoriser",
+    });
+    if (!confirme) return;
     proposals.forEach((row) => {
       row.manual = true;
       row.confidence = 1;

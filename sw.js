@@ -2,7 +2,7 @@
  * Service worker : rend l'application disponible hors connexion apres une
  * premiere visite en ligne. Bump CACHE_NAME si la liste des fichiers change.
  *
- * Strategie : reseau d'abord, secours sur le cache. En ligne, l'utilisateur a
+ * Strategie : reseau d'abord (avec un delai de 4 s), secours sur le cache. En ligne, l'utilisateur a
  * toujours la derniere version deployee (coherent avec le deploiement
  * automatique sur GitHub Pages) ; hors ligne, la derniere version mise en
  * cache pendant une visite reussie reste disponible.
@@ -28,7 +28,14 @@ const APP_SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      // Fichier par fichier plutot que cache.addAll : celui-ci echoue en bloc si une
+      // seule ressource repond 404, et l'application perdait alors tout le mode hors
+      // ligne a cause d'une icone manquante.
+      Promise.all(APP_SHELL.map((url) => cache.add(url).catch(() => {}))),
+    ),
+  );
   self.skipWaiting();
 });
 
@@ -55,7 +62,7 @@ async function networkFirst(request) {
     // reseau : le "network first" ne garantissait alors pas vraiment la
     // derniere version deployee. On force une requete fraiche pour les
     // fichiers de l'application (pas pour le CDN externe, laisse inchange).
-    const response = sameOrigin ? await fetch(cacheBustedUrl(request.url)) : await fetch(request);
+    const response = sameOrigin ? await fetchAvecDelai(cacheBustedUrl(request.url)) : await fetch(request);
     if (response.ok && sameOrigin) cache.put(request, response.clone());
     return response;
   } catch {
@@ -68,6 +75,18 @@ async function networkFirst(request) {
     }
     throw new Error("hors ligne et rien en cache pour cette ressource");
   }
+}
+
+/*
+ * Un reseau qui ne repond pas n'est pas une absence de reseau : portail captif d'hotel,
+ * 3G qui decroche sur un chantier. Sans delai, "reseau d'abord" attendait indefiniment
+ * au lieu de servir le cache, et l'application restait blanche.
+ */
+function fetchAvecDelai(url, delai = 4000) {
+  return Promise.race([
+    fetch(url),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("délai réseau dépassé")), delai)),
+  ]);
 }
 
 function cacheBustedUrl(url) {
