@@ -36,13 +36,25 @@ Main-d'œuvre     heures/unité × coût horaire
 + Matériaux      somme des fournitures : quantité/unité × prix du matériau
 + Matériel       forfait par unité
 = Coût direct
-× K              K = 1 + (frais généraux + frais de chantier + imprévus + marge) / 100
+× K              additive (par défaut) ou multiplicative, voir ci-dessous
 = Prix de vente
 ```
 
 Un ouvrage combine autant de fournitures que nécessaire — isolant, enduit, accessoires —
 chacune avec sa quantité par unité d'ouvrage. Le formulaire affiche le coût matière au
 fur et à mesure de la saisie.
+
+Le coefficient K se calcule de deux façons, réglables dans **Paramètres → Calcul** :
+
+- **Additive** (par défaut) : `K = 1 + (frais généraux + frais de chantier + imprévus +
+  marge) / 100`. Chaque taux s'applique sur le seul coût direct.
+- **Multiplicative** : `K = (1 + frais généraux/100) × (1 + frais de chantier/100) ×
+  (1 + imprévus/100) × (1 + marge/100)`. Chaque taux s'applique sur la base déjà majorée
+  par les précédents — K légèrement plus élevé à taux identiques, et l'écart grandit
+  avec la somme des taux.
+
+Changer la formule change le prix de vente de tous les ouvrages sans toucher aux taux :
+à garder en tête si des taux ont été calibrés en pensant à l'une des deux formules.
 
 Chaque ouvrage affiche sa décomposition (« Justifier ce prix ») : une ligne par
 fourniture, avec sa quantité et son prix. C'est ce qui permet de contrôler un calcul et

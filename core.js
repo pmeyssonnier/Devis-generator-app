@@ -237,7 +237,17 @@
     );
   }
 
+  function coefficientKMultiplicatif(settings) {
+    return (
+      (1 + (Number(settings?.fraisGeneraux) || 0) / 100) *
+      (1 + (Number(settings?.fraisChantier) || 0) / 100) *
+      (1 + (Number(settings?.imprevus) || 0) / 100) *
+      (1 + (Number(settings?.marge) || 0) / 100)
+    );
+  }
+
   function coefficientK(settings) {
+    if (settings?.formuleK === "multiplicative") return coefficientKMultiplicatif(settings);
     return 1 + coefficientPercent(settings) / 100;
   }
 
@@ -943,6 +953,7 @@
     roundMoney,
     coefficientPercent,
     coefficientK,
+    coefficientKMultiplicatif,
     composantsOf,
     materialResolver,
     composantsDetail,

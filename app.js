@@ -634,6 +634,7 @@
       if (form.elements[key]) form.elements[key].value = state.settings[key];
     });
     form.elements.tva.value = String(state.settings.tva);
+    form.elements.formuleK.value = state.settings.formuleK === "multiplicative" ? "multiplicative" : "additive";
     Object.entries(state.entrepreneur).forEach(([key, value]) => {
       const field = form.elements[`entrepreneur-${key}`];
       if (field) field.value = value ?? "";
@@ -647,7 +648,10 @@
       if (element) element.textContent = formatPercent(state.settings[key]);
     });
     $("#settings-k").textContent = C.coefficientK(state.settings).toFixed(3).replace(".", ",");
-    $("#settings-k-formula").textContent = `K = 1 + ${number.format(C.coefficientPercent(state.settings))} / 100`;
+    $("#settings-k-formula").textContent =
+      state.settings.formuleK === "multiplicative"
+        ? `K = (1+${formatPercent(state.settings.fraisGeneraux)}) × (1+${formatPercent(state.settings.fraisChantier)}) × (1+${formatPercent(state.settings.imprevus)}) × (1+${formatPercent(state.settings.marge)})`
+        : `K = 1 + ${number.format(C.coefficientPercent(state.settings))} / 100`;
   }
 
   function readSettingsForm(form) {
@@ -660,6 +664,7 @@
       marge: Number(data.marge) || 0,
       tva: Number(data.tva) || state.settings.tva || 21,
       peremptionJours: Math.max(0, Number(data.peremptionJours) || 0),
+      formuleK: data.formuleK === "multiplicative" ? "multiplicative" : "additive",
     };
     state.entrepreneur = {
       nom: data["entrepreneur-nom"] ?? "",
@@ -1328,6 +1333,7 @@
         ["Entreprise", state.entrepreneur.nom],
         ["N° TVA", state.entrepreneur.numeroTva],
         ["Coefficient K", C.coefficientK(state.settings)],
+        ["Formule K", state.settings.formuleK === "multiplicative" ? "multiplicative" : "additive"],
         ["Coût horaire", state.settings.coutHoraire],
         ["Frais généraux %", state.settings.fraisGeneraux],
         ["Frais de chantier %", state.settings.fraisChantier],

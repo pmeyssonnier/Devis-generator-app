@@ -501,6 +501,14 @@
                 <label><input name="tva" type="radio" value="6" /> 6 %</label>
                 <label><input name="tva" type="radio" value="21" /> 21 %</label>
               </fieldset>
+              <fieldset class="tax-field">
+                <legend>Formule du coefficient K</legend>
+                <label><input name="formuleK" type="radio" value="additive" /> Additive (par défaut)</label>
+                <label><input name="formuleK" type="radio" value="multiplicative" /> Multiplicative</label>
+                <small>Additive : K = 1 + (somme des taux) / 100. Multiplicative : chaque taux s’applique sur la
+                  base déjà majorée par les précédents — K légèrement plus élevé, prix de vente plus élevés à
+                  taux égaux.</small>
+              </fieldset>
               <div class="coefficient-box">
                 <span>Coefficient K appliqué aux coûts directs</span>
                 <strong id="settings-k">1,000</strong>
