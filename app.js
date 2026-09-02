@@ -1096,8 +1096,16 @@
             return `<tr class="${classes.join(" ")}">
               <td>${esc(row.numero)}</td>
               <td>${esc(row.description)}</td>
-              <td>${esc(row.unite)}${row.unitWarning ? ' <span class="flag" title="Unité incompatible avec l’ouvrage">!</span>' : ""}</td>
-              <td>${row.quantiteOk ? number.format(row.quantite) : '<span class="flag">?</span>'}</td>
+              <td>${esc(row.unite)}${
+                row.unitWarning
+                  ? ` <button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="unite" aria-label="Détail de l’incompatibilité d’unité">!</button>`
+                  : ""
+              }</td>
+              <td>${
+                row.quantiteOk
+                  ? number.format(row.quantite)
+                  : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
+              }</td>
               <td><select data-metre-match="${index}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsHtml}</select></td>
               <td>${matchBadge(row)}</td>
               <td>${prix ? euro.format(prix) : "-"}</td>
@@ -1784,6 +1792,25 @@
       const hidden = info.hasAttribute("hidden");
       info.toggleAttribute("hidden", !hidden);
       target.setAttribute("aria-expanded", String(hidden));
+      return;
+    }
+    if (data.metreFlagRow !== undefined) {
+      const row = state.metre.analysed[Number(data.metreFlagRow)];
+      if (!row) return;
+      if (data.metreFlagKind === "unite") {
+        const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
+        notify(
+          suggestion
+            ? `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche (« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou créez-en un nouveau dans la bibliothèque.`
+            : `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`,
+          "danger",
+        );
+      } else if (data.metreFlagKind === "quantite") {
+        notify(
+          `Quantité absente ou nulle dans le fichier importé pour le poste « ${row.numero} ». Ce poste ne peut pas être chiffré tant qu’une quantité n’est pas renseignée : corrigez le fichier source (ou obtenez la quantité manquante) puis réimportez-le.`,
+          "danger",
+        );
+      }
       return;
     }
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
