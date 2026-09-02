@@ -306,7 +306,9 @@
     $("#kpi-materiaux").textContent = state.materiaux.length;
     $("#kpi-k").textContent = C.coefficientK(state.settings).toFixed(3).replace(".", ",");
     $("#kpi-devis").textContent = euro.format(totals.ht);
-    $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId || row.unitWarning).length;
+    $("#kpi-alertes").textContent = state.metre.analysed.filter(
+      (row) => row.unitWarning || (!row.ouvrageId && !row.pourMemoire),
+    ).length;
     $("#kpi-recalage").textContent = recalagesRendement().filter(aRecaler).length + recalagesPrix().filter(aRecaler).length;
     $("#kpi-peremption").textContent = materiauxPerimes().length;
   }
@@ -1020,7 +1022,7 @@
   function actionGroups() {
     const groups = new Map();
     state.metre.analysed
-      .filter((row) => !row.ouvrageId || !row.quantiteOk || row.unitWarning)
+      .filter((row) => row.unitWarning || (!row.pourMemoire && (!row.ouvrageId || !row.quantiteOk)))
       .forEach((row) => {
         const family = C.classifyFamily(row.description);
         const key = `${row.lot}::${family}`;
@@ -1090,8 +1092,11 @@
           .map((row, index) => {
             const prix = metreRowPrice(row);
             const classes = [];
-            if (!row.ouvrageId) classes.push("row-missing");
-            else if (row.unitWarning) classes.push("row-warning");
+            if (row.unitWarning) classes.push("row-warning");
+            else if (row.pourMemoire) {
+              // Statut normal pour ce type de poste, rattache a un ouvrage ou non,
+              // quantite renseignee ou non : pas de mise en evidence rouge/orange.
+            } else if (!row.ouvrageId) classes.push("row-missing");
             else if (!row.quantiteOk) classes.push("row-warning");
             return `<tr class="${classes.join(" ")}">
               <td>${esc(row.numero)}</td>
@@ -1104,7 +1109,9 @@
               <td>${
                 row.quantiteOk
                   ? number.format(row.quantite)
-                  : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
+                  : row.pourMemoire
+                    ? "—"
+                    : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
               }</td>
               <td><select data-metre-match="${index}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsHtml}</select></td>
               <td>${matchBadge(row)}</td>
@@ -1121,6 +1128,11 @@
   }
 
   function matchBadge(row) {
+    // Un poste "pour memoire"/"hors marche" sans ouvrage rattache n'est pas une
+    // anomalie a traiter : c'est le statut normal de ce type de poste.
+    if (row.pourMemoire && !row.ouvrageId && !row.unitWarning) {
+      return `<span class="match memo">pour mémoire</span>`;
+    }
     // row.unitWarning avec un ouvrageId encore renseigne : forme laissee par une
     // session sauvegardee avant le garde-fou sur l'unite. Ne jamais l'afficher comme
     // une correspondance valable, quelle que soit sa confiance mémorisée.
@@ -1189,18 +1201,21 @@
       const unite = String(raw[mapping.unite] ?? "").trim();
       const quantite = C.parseNumber(raw[mapping.quantite]);
       const quantiteOk = Number.isFinite(quantite) && quantite > 0;
-      const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk };
+      // Un poste "pour memoire"/"hors marche" n'a normalement ni quantite ni prix a
+      // chiffrer : ce n'est pas une anomalie a signaler comme les autres.
+      const pourMemoire = C.isPourMemoire(description);
+      const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk, pourMemoire };
       const match = C.findMatch(base, state.ouvrages, cache);
 
       const label = `Poste ${numero}`;
       if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
-      if (!quantiteOk) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
+      if (!quantiteOk && !pourMemoire) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
       if (!match.ouvrageId && match.unitWarning) {
         alerts.push({
           type: "danger",
           message: `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
         });
-      } else if (!match.ouvrageId) {
+      } else if (!match.ouvrageId && !pourMemoire) {
         alerts.push({ type: "warning", message: `${label} : aucun ouvrage reconnu pour « ${description} ».` });
       } else if (match.unitWarning) {
         // Filet de securite : ne devrait plus se produire (findMatch et le choix manuel
@@ -1392,7 +1407,15 @@
             utilisable ? C.roundMoney(row.confidence) : "",
             utilisable ? C.roundMoney(priceOf(ouvrage).vente) : "",
             C.roundMoney(metreRowPrice(row)),
-            row.unitWarning ? "Unité incompatible" : !ouvrage ? "Ouvrage manquant" : row.quantiteOk ? "OK" : "Quantité à vérifier",
+            row.unitWarning
+              ? "Unité incompatible"
+              : !ouvrage
+                ? row.pourMemoire
+                  ? "Pour mémoire"
+                  : "Ouvrage manquant"
+                : row.quantiteOk
+                  ? "OK"
+                  : "Quantité à vérifier",
           ];
         }),
       ],

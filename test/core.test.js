@@ -61,6 +61,14 @@ test("une unite de longueur n'est pas compatible avec une unite de surface", () 
   assert.ok(C.unitsCompatible("m2", ""), "unite absente : on ne bloque pas");
 });
 
+test("un poste \"pour memoire\" ou \"hors marche\" est repere quelle que soit la casse ou les accents", () => {
+  assert.ok(C.isPourMemoire("Mobilier de vestiaire (pour mémoire, hors marché)"));
+  assert.ok(C.isPourMemoire("POUR MEMOIRE"));
+  assert.ok(C.isPourMemoire("Ouvrage hors marché"));
+  assert.ok(!C.isPourMemoire("Mise à la terre et liaisons équipotentielles RGIE"));
+  assert.ok(!C.isPourMemoire(""));
+});
+
 /* ------------------------------------------------------------------- calcul */
 
 const SETTINGS = { coutHoraire: 50, fraisGeneraux: 10, fraisChantier: 5, imprevus: 5, marge: 10 };

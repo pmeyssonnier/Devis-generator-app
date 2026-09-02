@@ -79,6 +79,11 @@
       .trim();
   }
 
+  function isPourMemoire(description) {
+    const text = normalizeText(description);
+    return text.includes("pour memoire") || text.includes("hors marche");
+  }
+
   function tokenize(value) {
     return normalizeText(value)
       .split(/[^a-z0-9]+/)
@@ -943,6 +948,7 @@
     HEADER_CANDIDATES,
     MATCH_THRESHOLD,
     normalizeText,
+    isPourMemoire,
     tokenize,
     stripLeadingCode,
     escapeHtml,

@@ -82,6 +82,9 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
 
 Contrôles effectués avant production du résultat : description manquante, quantité
 absente ou nulle, poste présent plusieurs fois, unité incompatible, poste non chiffrable.
+Un poste dont la désignation contient « pour mémoire » ou « hors marché » est traité à
+part : ni quantité ni prix n'y sont attendus, il n'est donc jamais signalé comme une
+anomalie.
 
 > Le classeur d'origine n'est gardé qu'en mémoire. Après un rechargement de la page,
 > réimportez le fichier pour pouvoir le compléter — le récapitulatif Excel et le CSV
