@@ -63,7 +63,9 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
 ## Répondre à un marché public
 
 1. **Importer** le fichier reçu (`.xlsx`, `.xlsm`, `.xls`, `.csv`, `.tsv`), en indiquant
-   la **commune / pouvoir adjudicateur**. Les feuilles multiples sont lues, la feuille
+   la **commune / pouvoir adjudicateur** — obligatoire : sans elle, les codes du
+   catalogue de départ s'appliqueraient comme des certitudes à un marché qui ne les a
+   jamais employés. Les feuilles multiples sont lues, la feuille
    « récapitulatif » est ignorée, les titres de lot sont rattachés aux postes qui les
    suivent, et les sous-totaux comme les tableaux de rappel en bas de feuille sont
    écartés.
@@ -74,9 +76,9 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
      sinon par similarité de libellé (score affiché). Un code du catalogue de
      départ, partagé entre marchés, n'est jamais appliqué comme une certitude ici —
      il pourrait appartenir à la codification d'une tout autre commune.
-   - **Aucune commune renseignée** : d'abord un code du catalogue de départ (ancien
-     comportement, fichiers déjà présents avant l'ajout de la commune), sinon par
-     similarité de libellé.
+   - **Aucune commune renseignée** : ce cas ne se produit plus à l'analyse, la commune
+     étant obligatoire ; il subsiste pour relire une session enregistrée avant cette
+     règle — d'abord un code du catalogue de départ, sinon par similarité de libellé.
 
    Dans les deux cas, un ouvrage dont l'unité est incompatible n'est jamais retenu,
    seulement signalé. Un ouvrage **forfaitaire** n'est retenu que pour une quantité
@@ -121,10 +123,26 @@ Un poste dont la désignation contient « pour mémoire » ou « hors marché »
 part : ni quantité ni prix n'y sont attendus, il n'est donc jamais signalé comme une
 anomalie.
 
-> Le classeur d'origine n'est gardé qu'en mémoire. Après un rechargement de la page,
-> réimportez le fichier pour pouvoir le compléter — le récapitulatif Excel et le CSV
-> restent disponibles sans lui. La mise en forme est préservée dans la limite de ce
-> que SheetJS sait réécrire.
+## Reprendre un marché plus tard
+
+Le fichier reçu et le métré chiffré sont conservés sur l'appareil (IndexedDB, séparé du
+`localStorage` de la bibliothèque). Concrètement :
+
+- Fermer l'application puis la rouvrir retrouve le métré en cours **et** son classeur
+  d'origine : « Compléter le fichier reçu » fonctionne toujours, sans réimport.
+- Importer un autre marché n'efface pas le précédent : il rejoint la liste **« Métrés
+  déjà chiffrés »**, en haut de la vue Métré. Chaque entrée rappelle la commune, la
+  date, le nombre de postes chiffrés et le total.
+- **Rouvrir** restitue les lignes, l'analyse, les colonnes choisies et le fichier reçu —
+  de quoi comparer deux marchés ou compléter un CSC rendu la semaine précédente.
+  **Retirer** supprime définitivement une entrée de l'historique.
+
+Un navigateur qui refuse IndexedDB (navigation privée stricte) fait simplement
+retomber l'application sur son comportement d'avant : le classeur ne survit pas au
+rechargement, et l'historique reste vide.
+
+> La mise en forme du classeur est préservée dans la limite de ce que SheetJS sait
+> réécrire (formules, fusions et largeurs oui ; polices, fonds et bordures non).
 
 ## Corriger la bibliothèque avec les chantiers réalisés
 
@@ -176,6 +194,7 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `favicon.svg` | Icône de l'onglet du navigateur |
 | `manifest.webmanifest`, `icons/` | Icône d'écran d'accueil (téléphone) et nom affiché en dessous |
 | `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
+| `db.js` | IndexedDB : classeur reçu et historique des métrés chiffrés |
 | `catalog.js` | Catalogue de départ et codifications connues |
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |

@@ -1275,3 +1275,39 @@ test("une migration relit un etat remanie sans laisser de reference morte", () =
   assert.deepEqual(referencesOrphelines(relu), []);
   assert.deepEqual(codesEnDouble(relu), []);
 });
+
+/* ------------------------------------------------------ historique des metres */
+
+test("resumeMetre compte ce qui est reellement chiffre", () => {
+  const metre = {
+    analysed: [
+      { numero: "1.01", ouvrageId: "a", quantiteOk: true, unitWarning: false },
+      { numero: "1.02", ouvrageId: "a", quantiteOk: false, unitWarning: false },
+      { numero: "1.03", ouvrageId: "", quantiteOk: true, unitWarning: false },
+      { numero: "1.04", ouvrageId: "a", quantiteOk: true, unitWarning: true },
+      { numero: "1.05", ouvrageId: "", quantiteOk: false, unitWarning: false, pourMemoire: true },
+    ],
+  };
+  const montants = { "1.01": 1200, "1.02": 0, "1.03": 0, "1.04": 0, "1.05": 0 };
+  const resume = C.resumeMetre(metre, (row) => montants[row.numero]);
+  assert.equal(resume.postes, 5);
+  assert.equal(resume.chiffres, 1, "seule la ligne complete et compatible compte");
+  assert.equal(resume.total, 1200);
+});
+
+test("resumeMetre supporte un metre vide ou sans montants", () => {
+  assert.deepEqual(C.resumeMetre({}, () => 0), { postes: 0, chiffres: 0, total: 0 });
+  assert.deepEqual(C.resumeMetre({ analysed: [] }, () => undefined), { postes: 0, chiffres: 0, total: 0 });
+  // Un montant non numerique ne doit jamais produire NaN dans la liste d'historique.
+  const metre = { analysed: [{ numero: "1", ouvrageId: "a", quantiteOk: true }] };
+  assert.equal(C.resumeMetre(metre, () => "abc").total, 0);
+});
+
+test("un metre neuf porte un identifiant vide, pret a etre attribue a l'import", () => {
+  assert.equal(C.emptyMetre().id, "");
+  const relu = C.normalizeState(
+    { metre: { id: "m-1", fileName: "CSC.xlsx", rows: [], analysed: [] } },
+    { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} },
+  );
+  assert.equal(relu.metre.id, "m-1", "l'identifiant survit a une relecture de l'etat");
+});
