@@ -15,6 +15,9 @@
     tva: 21,
     // Au-dela, un prix materiau date est signale comme a verifier. 0 desactive l'alerte.
     peremptionJours: 180,
+    // "additive" : K = 1 + somme des taux / 100. "multiplicative" : chaque taux
+    // s'applique sur la base deja majoree par les precedents (K plus eleve).
+    formuleK: "additive",
   };
 
   const defaultEntrepreneur = {

@@ -83,6 +83,19 @@ test("le prix de vente suit la decomposition du cahier des charges", () => {
   assert.equal(C.roundMoney(calc.vente), 65);
 });
 
+test("la formule du coefficient K est additive par defaut", () => {
+  assert.equal(C.coefficientK(SETTINGS), 1.3);
+  assert.equal(C.coefficientK({ ...SETTINGS, formuleK: "additive" }), 1.3);
+  assert.equal(C.coefficientK({ ...SETTINGS, formuleK: "inconnue" }), 1.3, "une valeur inattendue retombe sur l'additif");
+});
+
+test("la formule multiplicative empile chaque taux sur la base deja majoree", () => {
+  const k = C.coefficientK({ ...SETTINGS, formuleK: "multiplicative" });
+  // (1+0.10) * (1+0.05) * (1+0.05) * (1+0.10) = 1.334025
+  assert.equal(Math.round(k * 1e6) / 1e6, 1.334025);
+  assert.ok(k > C.coefficientK(SETTINGS), "le multiplicatif est toujours au moins egal a l'additif pour des taux positifs");
+});
+
 test("un ouvrage combine plusieurs fournitures", () => {
   const ouvrage = {
     heures: 0.5,
