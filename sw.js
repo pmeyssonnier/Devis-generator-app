@@ -11,7 +11,7 @@
  * documente comme dependant d'une connexion, l'import/export CSV et JSON
  * restant disponibles sans elle.
  */
-const CACHE_NAME = "devis-shell-v1";
+const CACHE_NAME = "devis-shell-v2";
 
 const APP_SHELL = [
   "./",
@@ -48,11 +48,15 @@ self.addEventListener("fetch", (event) => {
 
 async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
+  const sameOrigin = new URL(request.url).origin === self.location.origin;
   try {
-    const response = await fetch(request);
-    if (response.ok && new URL(request.url).origin === self.location.origin) {
-      cache.put(request, response.clone());
-    }
+    // fetch(request) peut sinon etre servi depuis le cache HTTP du navigateur
+    // (selon les en-tetes Cache-Control de GitHub Pages) sans repasser par le
+    // reseau : le "network first" ne garantissait alors pas vraiment la
+    // derniere version deployee. On force une requete fraiche pour les
+    // fichiers de l'application (pas pour le CDN externe, laisse inchange).
+    const response = sameOrigin ? await fetch(cacheBustedUrl(request.url)) : await fetch(request);
+    if (response.ok && sameOrigin) cache.put(request, response.clone());
     return response;
   } catch {
     const cached = await cache.match(request);
@@ -64,4 +68,10 @@ async function networkFirst(request) {
     }
     throw new Error("hors ligne et rien en cache pour cette ressource");
   }
+}
+
+function cacheBustedUrl(url) {
+  const busted = new URL(url);
+  busted.searchParams.set("_sw", Date.now().toString());
+  return busted.toString();
 }
