@@ -806,6 +806,12 @@ textarea {
   color: var(--accent-dark);
 }
 
+.toast.visible.warning {
+  background: var(--warn-soft-bg);
+  border-color: var(--warn);
+  color: var(--warn-soft-ink);
+}
+
 .toast.visible.danger {
   background: var(--danger-soft-bg);
   border-color: var(--danger);
@@ -929,6 +935,22 @@ td .match + small {
   margin-top: 3px;
   color: var(--muted);
   font-size: 11px;
+}
+
+/* Avertissement persistant sous un champ (ex. commune modifiee sans relancer
+   l'analyse) : un toast disparait, celui-ci reste tant que la cause est la. */
+.field-alert {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-ink);
+}
+
+.field-alert[hidden] {
+  display: none;
 }
 
 .create-ouvrage {

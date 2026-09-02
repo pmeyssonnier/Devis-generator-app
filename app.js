@@ -69,7 +69,11 @@
   /* ------------------------------------------------------------------- etat */
 
   function emptyMetre() {
-    return { fileName: "", commune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
+    // analysedCommune : la commune effectivement utilisee par la derniere analyse. C'est
+    // elle, et non le champ de saisie (modifiable a tout moment), qui decide sous quel
+    // profil les confirmations sont memorisees — les lignes ont ete rapprochees avec
+    // sa table de codes, elles doivent y retourner.
+    return { fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
   }
 
   function blankState() {
@@ -243,6 +247,12 @@
 
     next.metre = { ...emptyMetre(), ...(source.metre || {}) };
     next.metre.analysed = (next.metre.analysed || []).map((row) => ({ ...row, poste: row.poste || row.numero }));
+    // Session analysee avant l'apparition d'analysedCommune : la commune saisie etait
+    // alors la seule reference, on la reprend pour ne pas basculer ces lignes vers le
+    // refsMetre global au moment de les confirmer.
+    if ((source.metre || {}).analysedCommune === undefined && next.metre.analysed.length) {
+      next.metre.analysedCommune = String(next.metre.commune || "").trim();
+    }
     if (![6, 21].includes(Number(next.settings.tva))) next.settings.tva = 21;
     return next;
   }
@@ -1094,6 +1104,16 @@
     // frappe se ferait resauter le curseur a chaque caractere (cf. #ouvrage-search).
     const communeInput = $("#metre-commune");
     if (communeInput && document.activeElement !== communeInput) communeInput.value = state.metre.commune || "";
+    const communeAlerte = $("#metre-commune-alerte");
+    if (communeAlerte) {
+      const divergente = communeDivergente();
+      communeAlerte.hidden = !divergente;
+      if (divergente) {
+        communeAlerte.textContent = `Analyse faite pour « ${
+          state.metre.analysedCommune || "aucune commune"
+        } » : relancez l’analyse pour appliquer cette commune. Les confirmations restent mémorisées pour l’ancienne.`;
+      }
+    }
     $("#metre-communes-connues").innerHTML = Object.keys(state.mappingCommunes)
       .sort((a, b) => a.localeCompare(b, "fr"))
       .map((commune) => `<option value="${esc(commune)}"></option>`)
@@ -1256,6 +1276,7 @@
     // qu'aucun retour au refsMetre global n'est autorise pour cet import, meme si
     // cette commune n'a encore aucun code appris.
     const communeCodes = commune ? state.mappingCommunes[resolveCommuneKey(commune)] || {} : null;
+    state.metre.analysedCommune = commune;
 
     state.metre.analysed = state.metre.rows.map((raw, index) => {
       const numero = String(raw[mapping.poste] ?? "").trim() || String(index + 1);
@@ -1315,6 +1336,13 @@
     notify(`${chiffres} poste(s) sur ${state.metre.analysed.length} rapproché(s) automatiquement.`, "info");
   }
 
+  // Vrai quand le champ commune ne correspond plus a la commune de la derniere analyse
+  // (comparaison insensible a la casse/aux accents). Sans analyse, rien a comparer.
+  function communeDivergente() {
+    if (!state.metre.analysed.length) return false;
+    return C.normalizeText(state.metre.commune || "") !== C.normalizeText(state.metre.analysedCommune || "");
+  }
+
   // "Schaerbeek", "schaerbeek", "SCHAERBEEK" ne doivent pas devenir trois profils
   // distincts : on reutilise la clef deja enregistree qui correspond une fois
   // normalisee, sinon on cree une nouvelle clef avec la casse telle que tapee.
@@ -1334,7 +1362,10 @@
     if (!ouvrage || !row.numero || row.unitWarning) return;
     const key = C.normalizeRef(row.numero);
     if (!key) return;
-    const commune = String(state.metre.commune || "").trim();
+    // Commune de l'analyse, pas celle du champ : si l'utilisateur a change le champ
+    // sans relancer l'analyse, les lignes ont ete rapprochees (et donc validees) avec
+    // la table de l'ancienne commune — les memoriser ailleurs melangerait les profils.
+    const commune = String(state.metre.analysedCommune || "").trim();
     if (commune) {
       // Rattache le code a cette commune uniquement : deux communes qui reutilisent
       // coincidemment le meme numero de poste pour des ouvrages differents ne
@@ -1400,13 +1431,18 @@
 
   // Rattache le poste de metre a l'origine de "Créer un ouvrage à partir de ce poste"
   // a l'ouvrage effectivement sauvegarde (nouveau, modifie, ou existant reutilise).
+  // Retourne { status, row } : "aucun" (pas de poste en attente ou poste disparu),
+  // "unite" (rattachement refuse : unites incompatibles) ou "ok". L'appelant
+  // s'en sert pour dire la verite dans le toast — un poste promis "rattache
+  // automatiquement" qui ne l'est pas doit etre signale, pas passe sous silence.
   function linkCreatedOuvrageToMetreRow(ouvrageId) {
-    if (creatingOuvrageForMetreRow < 0) return;
+    if (creatingOuvrageForMetreRow < 0) return { status: "aucun", row: null };
     const row = state.metre.analysed[creatingOuvrageForMetreRow];
     creatingOuvrageForMetreRow = -1;
-    if (!row) return;
+    if (!row) return { status: "aucun", row: null };
     const ouvrage = ouvrageById(ouvrageId);
-    if (!ouvrage || !C.unitsCompatible(ouvrage.unite, row.unite)) return;
+    if (!ouvrage) return { status: "aucun", row };
+    if (!C.unitsCompatible(ouvrage.unite, row.unite)) return { status: "unite", row, ouvrage };
     row.ouvrageId = ouvrage.id;
     row.manual = true;
     row.confidence = 1;
@@ -1414,6 +1450,14 @@
     row.suggestionId = "";
     row.unitWarning = false;
     learnMatch(row);
+    return { status: "ok", row, ouvrage };
+  }
+
+  function messageRattachementUnite(lien) {
+    return (
+      `Le poste « ${lien.row.numero} » (${lien.row.unite || "unité ?"}) n’a pas été rattaché : ` +
+      `l’ouvrage est en « ${lien.ouvrage.unite} », unité incompatible. Rattachez-le manuellement dans le métré.`
+    );
   }
 
   /* ------------------------------------------------------------------ exports */
@@ -1707,19 +1751,26 @@
       const match = C.bestOuvrageMatch(payload, state.ouvrages);
       if (match && match.score >= SIMILARITE_OUVRAGE_SEUIL) {
         if (window.confirm(decrireProximiteOuvrage(payload, match))) {
-          const depuisMetre = creatingOuvrageForMetreRow >= 0;
-          linkCreatedOuvrageToMetreRow(match.ouvrage.id);
+          // Le libelle de cette commune (et ses mots cles) enrichissent l'ouvrage
+          // conserve : la prochaine fois que cette formulation revient — autre lot,
+          // code different — le rapprochement par libelle la reconnaitra d'emblee.
+          match.ouvrage.motsCles = C.normalizeKeywords([match.ouvrage.motsCles, payload.motsCles, payload.nom]);
+          const lien = linkCreatedOuvrageToMetreRow(match.ouvrage.id);
           event.currentTarget.reset();
           setComposantRows([]);
           updateEditForms();
           saveState();
           render();
-          notify(
-            depuisMetre
-              ? `Poste rattaché à l’ouvrage existant « ${match.ouvrage.nom} ». Rien de nouveau créé.`
-              : `Ouvrage existant conservé : « ${match.ouvrage.nom} ». Rien de nouveau créé.`,
-            "info",
-          );
+          if (lien.status === "unite") {
+            notify(`Ouvrage existant conservé : « ${match.ouvrage.nom} ». ${messageRattachementUnite(lien)}`, "danger");
+          } else {
+            notify(
+              lien.status === "ok"
+                ? `Poste « ${lien.row.numero} » rattaché à l’ouvrage existant « ${match.ouvrage.nom} ». Rien de nouveau créé.`
+                : `Ouvrage existant conservé : « ${match.ouvrage.nom} ». Rien de nouveau créé.`,
+              "info",
+            );
+          }
           return;
         }
       }
@@ -1736,13 +1787,19 @@
       savedId = uid();
       state.ouvrages.push({ id: savedId, poste: C.nextInternalCode(usedCodes, payload.nom), ...payload });
     }
-    linkCreatedOuvrageToMetreRow(savedId);
+    const lien = linkCreatedOuvrageToMetreRow(savedId);
     event.currentTarget.reset();
     setComposantRows([]);
     updateEditForms();
     saveState();
     render();
-    notify("Ouvrage enregistré.", "info");
+    if (lien.status === "unite") {
+      notify(`Ouvrage enregistré, mais ${messageRattachementUnite(lien)}`, "danger");
+    } else if (lien.status === "ok") {
+      notify(`Ouvrage enregistré et rattaché au poste « ${lien.row.numero} ».`, "info");
+    } else {
+      notify("Ouvrage enregistré.", "info");
+    }
   });
 
   $("#settings-form").addEventListener("submit", (event) => {
@@ -2330,9 +2387,21 @@
     }
   });
 
-  $("#metre-commune").addEventListener("input", (event) => {
+  // "change" (validation du champ) et non "input" : saveState() serialise tout l'etat,
+  // lignes du tableur importe comprises — le faire a chaque caractere se sentait sur
+  // un telephone avec un gros metre.
+  $("#metre-commune").addEventListener("change", (event) => {
     state.metre.commune = event.target.value;
     saveState();
+    renderMetre();
+    if (communeDivergente()) {
+      notify(
+        `Commune modifiée : relancez l’analyse pour l’appliquer. Tant que ce n’est pas fait, les confirmations restent mémorisées pour « ${
+          state.metre.analysedCommune || "aucune commune"
+        } ».`,
+        "warning",
+      );
+    }
   });
 
   $("#analyse-metre").addEventListener("click", analyseMetre);
