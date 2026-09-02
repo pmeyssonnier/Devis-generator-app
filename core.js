@@ -730,6 +730,57 @@
     };
   }
 
+  /*
+   * Proximite technique entre un nouvel ouvrage en cours de saisie (pas encore
+   * enregistre, donc sans id) et un ouvrage existant du catalogue : combine le
+   * libelle, les matieres reellement partagees et la proximite du rendement/materiel.
+   * Sert a proposer "utiliser l'existant" avant de creer un quasi-doublon.
+   */
+  function ouvrageProximity(payload, ouvrage) {
+    if (normalizeUnit(payload.unite) !== normalizeUnit(ouvrage.unite)) return 0;
+
+    const textScore = matchScore(payload.nom, ouvrage, null);
+
+    const payloadMateriaux = new Set((payload.composants || []).map((c) => c.materiauId).filter(Boolean));
+    const ouvrageMateriaux = new Set((ouvrage.composants || []).map((c) => c.materiauId).filter(Boolean));
+    let composantScore = null;
+    if (payloadMateriaux.size || ouvrageMateriaux.size) {
+      const union = new Set([...payloadMateriaux, ...ouvrageMateriaux]);
+      const commun = [...payloadMateriaux].filter((id) => ouvrageMateriaux.has(id)).length;
+      composantScore = union.size ? commun / union.size : 0;
+    }
+
+    const closeness = (a, b) => {
+      const na = Number(a) || 0;
+      const nb = Number(b) || 0;
+      if (!na && !nb) return null;
+      return 1 - Math.min(1, Math.abs(na - nb) / Math.max(na, nb, 0.01));
+    };
+    const rendementScore = closeness(payload.heures, ouvrage.heures);
+    const materielScore = closeness(payload.materiel, ouvrage.materiel);
+
+    const terms = [
+      { value: textScore, weight: 0.4 },
+      { value: composantScore, weight: 0.35 },
+      { value: rendementScore, weight: 0.15 },
+      { value: materielScore, weight: 0.1 },
+    ].filter((term) => term.value !== null);
+    const totalWeight = terms.reduce((sum, term) => sum + term.weight, 0);
+    if (!totalWeight) return textScore;
+
+    return terms.reduce((sum, term) => sum + term.value * term.weight, 0) / totalWeight;
+  }
+
+  // Le candidat le plus proche parmi le catalogue, ou null si rien d'assez proche.
+  function bestOuvrageMatch(payload, ouvrages) {
+    let best = null;
+    ouvrages.forEach((ouvrage) => {
+      const score = ouvrageProximity(payload, ouvrage);
+      if (score > 0 && (!best || score > best.score)) best = { ouvrage, score };
+    });
+    return best;
+  }
+
   /* ------------------------------------------------------------------ doublons */
 
   function findDuplicates(ouvrages, priceOf) {
@@ -999,6 +1050,8 @@
     matchScore,
     findMatch,
     findDuplicates,
+    ouvrageProximity,
+    bestOuvrageMatch,
     findHeader,
     findHeaderRowIndex,
     looksLikeCode,

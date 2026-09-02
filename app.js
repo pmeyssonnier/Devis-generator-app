@@ -42,6 +42,9 @@
 
   let editingMateriauId = "";
   let editingOuvrageId = "";
+  // Index dans state.metre.analysed a rattacher a l'ouvrage sauvegarde, quand le
+  // formulaire a ete ouvert depuis "Créer un ouvrage à partir de ce poste". -1 sinon.
+  let creatingOuvrageForMetreRow = -1;
   let editingDevisMeta = false;
   let editingDevisLineId = "";
   let editingChantierId = "";
@@ -1142,7 +1145,7 @@
                     : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
               }</td>
               <td><select data-metre-match="${index}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsHtml}</select></td>
-              <td>${matchBadge(row)}</td>
+              <td>${matchBadge(row, index)}</td>
               <td>${prix ? euro.format(prix) : "-"}</td>
             </tr>`;
           })
@@ -1155,7 +1158,7 @@
     });
   }
 
-  function matchBadge(row) {
+  function matchBadge(row, index) {
     // Un poste "pour memoire"/"hors marche" sans ouvrage rattache n'est pas une
     // anomalie a traiter : c'est le statut normal de ce type de poste.
     if (row.pourMemoire && !row.ouvrageId && !row.unitWarning) {
@@ -1166,9 +1169,12 @@
     // une correspondance valable, quelle que soit sa confiance mémorisée.
     if (!row.ouvrageId || row.unitWarning) {
       const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
+      const creerBouton = row.pourMemoire
+        ? ""
+        : `<button type="button" class="ghost create-ouvrage" data-metre-create-ouvrage="${index}">Créer un ouvrage à partir de ce poste</button>`;
       return suggestion
-        ? `<span class="match none">à traiter</span><small>proche : ${esc(suggestion.nom)}</small>`
-        : `<span class="match none">à traiter</span>`;
+        ? `<span class="match none">à traiter</span><small>proche : ${esc(suggestion.nom)}</small>${creerBouton}`
+        : `<span class="match none">à traiter</span>${creerBouton}`;
     }
     const level = row.confidence >= 0.99 ? "high" : row.confidence >= 0.55 ? "medium" : "low";
     return `<span class="match ${level}">${percent.format(row.confidence)}</span><small>${esc(row.reason || "")}</small>`;
@@ -1315,6 +1321,56 @@
     if (ouvrage.refsMetre.length !== before) {
       ouvrage.motsCles = C.normalizeKeywords([ouvrage.motsCles, row.numero]);
     }
+  }
+
+  // Seuil a partir duquel un ouvrage existant est propose avant d'en creer un nouveau.
+  const SIMILARITE_OUVRAGE_SEUIL = 0.55;
+
+  function decrireProximiteOuvrage(payload, match) {
+    const pct = Math.round(match.score * 100);
+    const lignes = [
+      `Un ouvrage proche existe déjà dans la bibliothèque : « ${match.ouvrage.nom} » (${match.ouvrage.poste}).`,
+      `Proximité technique estimée : ${pct} % (libellé, matériaux, rendement, matériel).`,
+      "",
+      "Composition — existant → saisi :",
+    ];
+    const existant = new Map((match.ouvrage.composants || []).map((c) => [c.materiauId, c.quantite]));
+    const saisi = new Map((payload.composants || []).map((c) => [c.materiauId, c.quantite]));
+    const tousMateriaux = new Set([...existant.keys(), ...saisi.keys()]);
+    if (tousMateriaux.size) {
+      tousMateriaux.forEach((id) => {
+        const nom = materialById(id)?.nom || "matériau inconnu";
+        const a = existant.has(id) ? number.format(existant.get(id)) : "—";
+        const b = saisi.has(id) ? number.format(saisi.get(id)) : "—";
+        lignes.push(`  · ${nom} : ${a} → ${b}`);
+      });
+    } else {
+      lignes.push("  (aucun composant des deux côtés)");
+    }
+    lignes.push(`  · Main-d’œuvre (h/${payload.unite || "unité"}) : ${number.format(match.ouvrage.heures)} → ${number.format(payload.heures)}`);
+    lignes.push(`  · Matériel : ${euro.format(match.ouvrage.materiel)} → ${euro.format(payload.materiel)}`);
+    lignes.push("");
+    lignes.push("OK : utiliser l’ouvrage existant, rien de nouveau n’est créé.");
+    lignes.push("Annuler : créer quand même ce nouvel ouvrage.");
+    return lignes.join("\n");
+  }
+
+  // Rattache le poste de metre a l'origine de "Créer un ouvrage à partir de ce poste"
+  // a l'ouvrage effectivement sauvegarde (nouveau, modifie, ou existant reutilise).
+  function linkCreatedOuvrageToMetreRow(ouvrageId) {
+    if (creatingOuvrageForMetreRow < 0) return;
+    const row = state.metre.analysed[creatingOuvrageForMetreRow];
+    creatingOuvrageForMetreRow = -1;
+    if (!row) return;
+    const ouvrage = ouvrageById(ouvrageId);
+    if (!ouvrage || !C.unitsCompatible(ouvrage.unite, row.unite)) return;
+    row.ouvrageId = ouvrage.id;
+    row.manual = true;
+    row.confidence = 1;
+    row.reason = "confirmé";
+    row.suggestionId = "";
+    row.unitWarning = false;
+    learnMatch(row);
   }
 
   /* ------------------------------------------------------------------ exports */
@@ -1600,14 +1656,44 @@
       refsMetre: refs,
       motsCles: C.normalizeKeywords([data.motsCles, refs.join(", ")]),
     };
+
+    // Avant de creer un ouvrage (pas en modification), on verifie qu'il n'existe pas
+    // deja quelque chose de tres proche : sinon deux communes avec des libelles
+    // legerement differents pour le meme ouvrage finissent en quasi-doublons.
+    if (!editingOuvrageId) {
+      const match = C.bestOuvrageMatch(payload, state.ouvrages);
+      if (match && match.score >= SIMILARITE_OUVRAGE_SEUIL) {
+        if (window.confirm(decrireProximiteOuvrage(payload, match))) {
+          const depuisMetre = creatingOuvrageForMetreRow >= 0;
+          linkCreatedOuvrageToMetreRow(match.ouvrage.id);
+          event.currentTarget.reset();
+          setComposantRows([]);
+          updateEditForms();
+          saveState();
+          render();
+          notify(
+            depuisMetre
+              ? `Poste rattaché à l’ouvrage existant « ${match.ouvrage.nom} ». Rien de nouveau créé.`
+              : `Ouvrage existant conservé : « ${match.ouvrage.nom} ». Rien de nouveau créé.`,
+            "info",
+          );
+          return;
+        }
+      }
+    }
+
+    let savedId;
     if (editingOuvrageId) {
       const ouvrage = ouvrageById(editingOuvrageId);
       if (ouvrage) Object.assign(ouvrage, payload);
+      savedId = editingOuvrageId;
       editingOuvrageId = "";
     } else {
       const usedCodes = new Set(state.ouvrages.map((ouvrage) => ouvrage.poste));
-      state.ouvrages.push({ id: uid(), poste: C.nextInternalCode(usedCodes, payload.nom), ...payload });
+      savedId = uid();
+      state.ouvrages.push({ id: savedId, poste: C.nextInternalCode(usedCodes, payload.nom), ...payload });
     }
+    linkCreatedOuvrageToMetreRow(savedId);
     event.currentTarget.reset();
     setComposantRows([]);
     updateEditForms();
@@ -1876,6 +1962,7 @@
       }
       return;
     }
+    if (data.metreCreateOuvrage !== undefined) return startOuvrageCreationFromMetreRow(data.metreCreateOuvrage);
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
     if (data.confirmPrixMateriau) return confirmerPrixMateriau(data.confirmPrixMateriau);
     if (data.editMateriau) return startMateriauEdit(data.editMateriau);
@@ -1998,6 +2085,7 @@
 
   $("#ouvrage-cancel-edit").addEventListener("click", () => {
     editingOuvrageId = "";
+    creatingOuvrageForMetreRow = -1;
     $("#ouvrage-form").reset();
     setComposantRows([]);
     updateEditForms();
@@ -2041,6 +2129,7 @@
     const ouvrage = ouvrageById(id);
     if (!ouvrage) return;
     editingOuvrageId = id;
+    creatingOuvrageForMetreRow = -1;
     const form = $("#ouvrage-form");
     form.elements.nom.value = ouvrage.nom;
     form.elements.unite.value = ouvrage.unite;
@@ -2052,6 +2141,25 @@
     form.elements.poste.value = ouvrage.poste;
     updateEditForms();
     form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // Pré-remplit le formulaire "nouvel ouvrage" avec le libellé/l'unité d'un poste de
+  // métré non reconnu : evite de retaper le meme concept avec des mots differents,
+  // la cause la plus frequente des quasi-doublons entre communes.
+  function startOuvrageCreationFromMetreRow(index) {
+    const row = state.metre.analysed[Number(index)];
+    if (!row) return;
+    goToView("ouvrages");
+    editingOuvrageId = "";
+    creatingOuvrageForMetreRow = Number(index);
+    const form = $("#ouvrage-form");
+    form.reset();
+    setComposantRows([]);
+    form.elements.nom.value = row.description;
+    form.elements.unite.value = row.unite;
+    updateEditForms();
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+    notify(`Complétez la composition, puis enregistrez : le poste « ${row.numero} » sera rattaché automatiquement.`, "info");
   }
 
   function startDevisLineEdit(id) {

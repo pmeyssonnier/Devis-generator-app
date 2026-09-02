@@ -931,6 +931,16 @@ td .match + small {
   font-size: 11px;
 }
 
+.create-ouvrage {
+  display: block;
+  min-height: 0;
+  margin-top: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  white-space: normal;
+  text-align: left;
+}
+
 .flag {
   display: inline-block;
   width: 18px;
