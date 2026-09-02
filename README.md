@@ -87,7 +87,17 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    la modifier ensuite affiche un rappel de relancer l'analyse, et les confirmations
    faites entre-temps restent mémorisées pour la commune de l'analyse (les lignes ont
    été rapprochées avec sa table de codes, elles ne doivent pas atterrir ailleurs).
-4. **Contrôler et corriger** les correspondances. « Confirmer et mémoriser » enregistre
+4. **Contrôler et corriger** les correspondances. Le bloc d'import se replie dès que
+   l'analyse a tourné : le tableau prend toute la largeur, et sur téléphone chaque
+   poste devient une carte. Une pastille dit ce qu'on regarde — vert « code connu »
+   ou « confirmé » (certain), ambre « libellé 72 % » (proposition à vérifier), rouge
+   « à traiter » (aucun ouvrage d'unité compatible) — et la légende au-dessus du
+   tableau le rappelle. Les pastilles « ! » et « ? » ouvrent leur explication sous la
+   ligne concernée. Quand l'app a déjà repéré l'ouvrage le plus proche et que son
+   unité convient, **« Utiliser … »** l'applique en un clic ; la liste déroulante ne
+   propose que les ouvrages d'unité compatible.
+
+   « Confirmer et mémoriser » (avec le nombre de propositions en attente) enregistre
    le code du poste sur l'ouvrage, **propre à la commune indiquée** : au marché suivant
    de cette même commune, il sera reconnu d'emblée, sans risquer de confondre deux
    communes qui réutilisent coïncidemment le même numéro de poste pour des ouvrages
