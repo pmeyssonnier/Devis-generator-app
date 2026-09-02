@@ -864,3 +864,87 @@ test("un ouvrage \"pour memoire\" du catalogue ne pre-enregistre aucun code de m
     assert.equal(ouvrage.ref, "", `${ouvrage.nom} ne doit avoir aucun code de metre pre-enregistre`);
   });
 });
+
+/* ------------------------------------------------------- forfaits et quantites */
+
+test("un forfait n'est compatible avec une autre unite que pour une quantite de 1", () => {
+  assert.equal(C.unitsCompatible("FF", "m2"), true, "sans quantite connue : joker historique");
+  assert.equal(C.unitsCompatible("FF", "m2", 1), true);
+  assert.equal(C.unitsCompatible("m2", "FF", 1), true);
+  assert.equal(C.unitsCompatible("FF", "m2", 180), false, "un prix global ne se multiplie pas par 180");
+  assert.equal(C.unitsCompatible("pce", "FF", 12), false);
+  assert.equal(C.unitsCompatible("FF", "FF", 12), true, "meme unite des deux cotes : toujours compatible");
+  assert.equal(C.unitsCompatible("FF", "m2", 0), true, "quantite absente : la ligne n'est pas chiffrable de toute facon");
+  assert.equal(C.isForfaitUnit("Forfait"), true);
+  assert.equal(C.isForfaitUnit("m2"), false);
+});
+
+test("un ouvrage forfaitaire n'est plus rapproche d'un poste a quantite, meme par code connu", () => {
+  const ouvrages = [
+    { id: "ff", nom: "Installation de chantier, amenée et repli", unite: "FF", refsMetre: ["1.01"], motsCles: "installation chantier amenee repli" },
+  ];
+  const parCode = C.findMatch({ poste: "1.01", numero: "1.01", description: "Installation de chantier", unite: "m2", quantite: 180 }, ouvrages, new Map());
+  assert.equal(parCode.ouvrageId, "", "180 m2 x un forfait : jamais applique");
+  assert.equal(parCode.unitWarning, true);
+  assert.equal(parCode.suggestionId, "ff", "mais propose comme piste, pour que l'utilisateur comprenne");
+
+  const parLibelle = C.findMatch({ poste: "X", numero: "X", description: "Installation de chantier", unite: "pce", quantite: 12 }, ouvrages, new Map());
+  assert.equal(parLibelle.ouvrageId, "");
+  assert.equal(parLibelle.unitWarning, true);
+
+  const unite = C.findMatch({ poste: "1.01", numero: "1.01", description: "Installation de chantier", unite: "pce", quantite: 1 }, ouvrages, new Map());
+  assert.equal(unite.ouvrageId, "ff", "quantite 1 : le forfait reste applicable a n'importe quelle unite");
+});
+
+test("un numero de ligne fabrique faute de colonne N° n'est jamais un code", () => {
+  const ouvrages = [{ id: "p", nom: "Peinture murs intérieurs", unite: "m2", refsMetre: ["1"], motsCles: "peinture murs" }];
+  // "1" a ete appris (a tort, avant ce garde-fou) : une ligne 1 sans numero ne doit pas le retrouver.
+  const synthetique = C.findMatch(
+    { poste: "1", numero: "1", numeroSynthetique: true, description: "Carrelage de sol grès cérame", unite: "m2", quantite: 40 },
+    ouvrages,
+    new Map(),
+  );
+  assert.notEqual(synthetique.ouvrageId, "p");
+  const reel = C.findMatch({ poste: "1", numero: "1", description: "Carrelage de sol grès cérame", unite: "m2", quantite: 40 }, ouvrages, new Map());
+  assert.equal(reel.ouvrageId, "p", "un vrai code « 1 » lu dans le fichier garde le comportement historique");
+});
+
+/* --------------------------------------------------------- lecture multi-feuilles */
+
+test("rowField retrouve la colonne d'une ligne dont la feuille a d'autres en-tetes", () => {
+  const lot1 = C.rowsFromGrid([["N°", "Description", "Unité", "Quantité", "PU"], ["1.01", "Enduit de façade", "m2", 120, ""]], "Lot 1");
+  const lot2 = C.rowsFromGrid([["Poste", "Désignation", "Un", "Qté", "PU"], ["2.01", "Peinture des murs", "m2", 80, ""]], "Lot 2");
+  const rows = lot1.rows.concat(lot2.rows);
+  // Mapping global calcule sur l'union des en-tetes : il retient ceux du Lot 2 pour
+  // poste/description et ceux du Lot 1 pour unite/quantite (premier trouve).
+  const mapping = { poste: "Poste", description: "Désignation", unite: "Unité", quantite: "Quantité" };
+  const lu = rows.map((raw) => ({
+    numero: String(C.rowField(raw, mapping.poste, C.HEADER_CANDIDATES.poste) ?? "").trim(),
+    description: String(C.rowField(raw, mapping.description, C.HEADER_CANDIDATES.description) ?? "").trim(),
+    unite: String(C.rowField(raw, mapping.unite, C.HEADER_CANDIDATES.unite) ?? "").trim(),
+    quantite: C.parseNumber(C.rowField(raw, mapping.quantite, C.HEADER_CANDIDATES.quantite)),
+  }));
+  assert.deepEqual(lu, [
+    { numero: "1.01", description: "Enduit de façade", unite: "m2", quantite: 120 },
+    { numero: "2.01", description: "Peinture des murs", unite: "m2", quantite: 80 },
+  ]);
+  // L'en-tete mappe present mais vide reste vide : pas de repli sur une autre colonne.
+  assert.equal(C.rowField({ Description: "", __cols: { Description: 1, Désignation: 2 }, Désignation: "x" }, "Description", C.HEADER_CANDIDATES.description), "");
+  // Aucun en-tete choisi (« — ») : choix explicite, pas de detection a la place de l'utilisateur.
+  assert.equal(C.rowField(rows[0], "", C.HEADER_CANDIDATES.poste), undefined);
+});
+
+test("un poste dont le libelle contient « total » ou « report » n'est pas un sous-total", () => {
+  const parsed = C.rowsFromGrid(
+    [
+      ["N°", "Désignation", "Unité", "Quantité"],
+      ["1.01", "Démontage total de la chaudière existante", "pce", 1],
+      ["1.02", "Report des eaux de toiture vers l'égout", "m", 12],
+      ["1", "Sous-total lot 1", "", ""],
+      ["", "Total général", "", ""],
+    ],
+    "Feuil1",
+  );
+  assert.deepEqual(parsed.rows.map((row) => row["N°"]), ["1.01", "1.02"]);
+  assert.equal(parsed.skipped, 1, "le sous-total a code numerique est ecarte ET compte ; la ligne sans code est un titre ignore");
+});
