@@ -69,10 +69,17 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    écartés.
 2. **Vérifier les colonnes** détectées automatiquement, y compris la colonne de prix
    unitaire à compléter.
-3. **Analyser** : chaque poste est rapproché d'un ouvrage, d'abord par un code de métré
-   déjà appris pour **cette commune**, puis par un code du catalogue de départ partagé
-   entre marchés, sinon par similarité de libellé (score affiché). Un ouvrage dont
-   l'unité est incompatible n'est jamais retenu, seulement signalé.
+3. **Analyser** : chaque poste est rapproché d'un ouvrage.
+   - **Commune renseignée** : d'abord un code déjà appris pour **cette commune**,
+     sinon par similarité de libellé (score affiché). Un code du catalogue de
+     départ, partagé entre marchés, n'est jamais appliqué comme une certitude ici —
+     il pourrait appartenir à la codification d'une tout autre commune.
+   - **Aucune commune renseignée** : d'abord un code du catalogue de départ (ancien
+     comportement, fichiers déjà présents avant l'ajout de la commune), sinon par
+     similarité de libellé.
+
+   Dans les deux cas, un ouvrage dont l'unité est incompatible n'est jamais retenu,
+   seulement signalé.
 4. **Contrôler et corriger** les correspondances. « Confirmer et mémoriser » enregistre
    le code du poste sur l'ouvrage, **propre à la commune indiquée** : au marché suivant
    de cette même commune, il sera reconnu d'emblée, sans risquer de confondre deux
