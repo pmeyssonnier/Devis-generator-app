@@ -20,6 +20,13 @@
   --warn-soft-ink: #5d3b0d;
   --danger-soft-bg: #fbeeee;
   --danger-soft-ink: #642121;
+  /* Texte pose SUR un aplat accent/danger. En clair ces aplats sont fonces
+     (texte blanc) ; en sombre ils sont clairs, ou du blanc tombait a 2,5:1. */
+  --on-accent: #ffffff;
+  --on-danger: #ffffff;
+  /* Aplat du drapeau « quantité manquante » : --warn ne donne que 4,0:1 avec du
+     blanc sur 12 px gras, sous le seuil AA. */
+  --flag-warn-bg: #a35f0d;
   --shadow: 0 18px 40px rgba(36, 50, 45, 0.09);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -49,6 +56,9 @@
     --warn-soft-ink: #f0c48c;
     --danger-soft-bg: #3a1817;
     --danger-soft-ink: #f3b0ac;
+    --on-accent: #0a1614;
+    --on-danger: #2a0f0e;
+    --flag-warn-bg: #d99a52;
     --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
   }
 }
@@ -70,6 +80,9 @@
   --warn-soft-ink: #f0c48c;
   --danger-soft-bg: #3a1817;
   --danger-soft-ink: #f3b0ac;
+  --on-accent: #0a1614;
+  --on-danger: #2a0f0e;
+  --flag-warn-bg: #d99a52;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
 }
 
@@ -275,7 +288,7 @@ button {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 700;
 }
 
@@ -359,9 +372,15 @@ button.ghost:hover {
 }
 
 .editor-grid,
-.devis-layout,
-.metre-grid {
+.devis-layout {
   grid-template-columns: 380px 1fr;
+}
+
+/* Le tableau des correspondances a besoin de ~820px : dans une colonne de 508px il
+   sortait de l'ecran, « Ouvrage retenu » et « Confiance » compris. Import et
+   colonnes passent donc AU-DESSUS, sur toute la largeur. */
+.metre-grid {
+  grid-template-columns: 1fr;
 }
 
 .panel {
@@ -723,7 +742,7 @@ textarea {
 }
 
 .metre-table select {
-  min-width: 220px;
+  min-width: 200px;
 }
 
 .group-summary {
@@ -746,9 +765,6 @@ textarea {
     position: static;
   }
 
-  .nav {
-    grid-template-columns: repeat(3, 1fr);
-  }
 
   .topbar,
   .split,
@@ -776,7 +792,6 @@ textarea {
     font-size: 28px;
   }
 
-  .nav,
   .kpis,
   .line-form,
   .field-map {
@@ -786,24 +801,73 @@ textarea {
 
 /* ------------------------------------------------------- ajouts v2 */
 
+/*
+ * Ancre en bas de la fenetre, pas dans le flux : place sous la barre de titre, il
+ * s'affichait jusqu'a 3 300 px au-dessus du poste sur lequel on venait de cliquer —
+ * donc invisible, exactement quand il servait. Il reste tant qu'on ne le ferme pas
+ * pour les messages d'erreur.
+ */
 .toast {
-  margin-bottom: 18px;
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 40;
+  width: min(560px, calc(100vw - 24px));
+  transform: translate(-50%, 12px);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   padding: 0 14px;
   max-height: 0;
   overflow: hidden;
   border-radius: 8px;
   border: 1px solid transparent;
+  box-shadow: var(--shadow);
   opacity: 0;
-  transition: max-height 0.2s ease, opacity 0.2s ease, padding 0.2s ease;
+  pointer-events: none;
+  transition: max-height 0.2s ease, opacity 0.2s ease, padding 0.2s ease, transform 0.2s ease;
 }
 
 .toast.visible {
-  max-height: 200px;
+  max-height: min(60vh, 420px);
   padding: 12px 14px;
+  overflow-y: auto;
   opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
   background: var(--soft);
   border-color: var(--accent);
   color: var(--accent-dark);
+}
+
+#toast-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-close {
+  flex: none;
+  min-height: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
+  }
 }
 
 .toast.visible.warning {
@@ -815,7 +879,7 @@ textarea {
 .toast.visible.danger {
   background: var(--danger-soft-bg);
   border-color: var(--danger);
-  color: var(--danger);
+  color: var(--danger-soft-ink);
 }
 
 .panel-head small {
@@ -915,13 +979,13 @@ textarea {
 
 .match.medium {
   background: var(--warn-soft-bg);
-  color: var(--warn);
+  color: var(--warn-soft-ink);
 }
 
 .match.low,
 .match.none {
   background: var(--danger-soft-bg);
-  color: var(--danger);
+  color: var(--danger-soft-ink);
 }
 
 .match.memo {
@@ -965,19 +1029,26 @@ td .match + small {
 
 .flag {
   display: inline-block;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
   font-size: 12px;
   font-weight: 700;
   text-align: center;
-  line-height: 18px;
+  line-height: 20px;
   cursor: pointer;
+}
+
+/* Quantite manquante : un avertissement, pas une erreur — la ligne garde ainsi une
+   seule couleur (cf. tr.row-warning). */
+.flag.warn {
+  background: var(--flag-warn-bg);
+  color: var(--on-danger);
 }
 
 /* Teinte tres subtile, derivee directement du theme : pas besoin d'un token dedie. */
@@ -1133,5 +1204,298 @@ tr.row-warning td {
   .releve-form,
   .achat-form {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ------------------------------------------------- métré : lisibilité (S2) */
+
+/* Reglage du metre : un bloc repliable, ouvert tant qu'il reste quelque chose a
+   regler, referme des que l'analyse a tourne. */
+.metre-setup > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  font-size: 19px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.metre-setup > summary::-webkit-details-marker {
+  display: none;
+}
+
+.metre-setup > summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.metre-setup[open] > summary::after {
+  content: "▴";
+}
+
+.metre-setup > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.metre-setup[open] > summary {
+  margin-bottom: 16px;
+}
+
+.metre-setup .setup-state {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.setup-subtitle {
+  margin: 18px 0 10px;
+  font-size: 15px;
+}
+
+/* Ce que veut dire chaque pastille de confiance. */
+.metre-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metre-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Appliquer en un clic l'ouvrage que l'app a deja identifie comme le plus proche :
+   sinon il fallait le retrouver a la main dans une liste de plusieurs dizaines. */
+.apply-suggestion,
+.create-ouvrage {
+  display: block;
+  min-height: 0;
+  margin-top: 5px;
+  padding: 5px 9px;
+  font-size: 11px;
+  white-space: normal;
+  text-align: left;
+}
+
+.apply-suggestion {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  font-weight: 600;
+}
+
+/* Explication d'un drapeau, ouverte sous la ligne concernee : elle reste sous les
+   yeux le temps de corriger, contrairement a un message qui s'efface. */
+tr.flag-detail-row td {
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-ink);
+  border-bottom: 2px solid var(--warn);
+  line-height: 1.5;
+}
+
+tr.flag-detail-row.danger td {
+  background: var(--danger-soft-bg);
+  color: var(--danger-soft-ink);
+  border-bottom-color: var(--danger);
+}
+
+.metre-table td.compact {
+  white-space: nowrap;
+}
+
+/* La colonne « Confiance » porte aussi les actions (« Utiliser … », « Créer un
+   ouvrage … ») : trop etroite, chaque bouton se coupait sur quatre lignes. */
+.metre-table th:nth-child(6),
+.metre-table td:nth-child(6) {
+  min-width: 190px;
+}
+
+/* ------------------------------------------------- navigation mobile (S2) */
+
+@media (max-width: 980px) {
+  /* La barre laterale occupait 562 px : apres « Métré public », l'ecran affichait
+     encore le menu. Elle devient un bandeau, la navigation passe en bas. */
+  .sidebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+  }
+
+  .brand {
+    margin-bottom: 0;
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-mark svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .brand strong {
+    font-size: 15px;
+  }
+
+  .brand span,
+  .sidebar-version {
+    display: none;
+  }
+
+  .theme-toggle {
+    margin-top: 0;
+    width: 132px;
+  }
+
+  .nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 0;
+    padding: 4px 2px calc(4px + env(safe-area-inset-bottom, 0px));
+    background: #17201f;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 52px;
+    padding: 6px 2px;
+    border-radius: 6px;
+    text-align: center;
+  }
+
+  /* Libelle court : « Tableau de bord » ne tient pas dans 55 px. */
+  .nav-item span {
+    display: none;
+  }
+
+  .nav-item::after {
+    content: attr(data-short);
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  /* Espace pour que la barre ne recouvre jamais la fin d'une vue ni le message. */
+  .main {
+    padding-bottom: 76px;
+  }
+
+  .toast {
+    bottom: 72px;
+  }
+}
+
+/* ------------------------------------------------- métré en cartes (S2) */
+
+@media (max-width: 620px) {
+  /* Sept colonnes ne tiennent pas dans 390 px : chaque poste devient une carte,
+     avec le libelle de colonne en regard de sa valeur. */
+  .metre-table table,
+  .metre-table tbody,
+  .metre-table tr,
+  .metre-table td {
+    display: block;
+    width: auto;
+  }
+
+  .metre-table thead {
+    display: none;
+  }
+
+  .metre-table tr {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-left-width: 4px;
+    border-radius: 8px;
+  }
+
+  .metre-table td {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+    padding: 3px 0;
+    border: 0;
+  }
+
+  .metre-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+
+  .metre-table td[data-label="Désignation"] {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  .metre-table td[data-label="Désignation"]::before {
+    display: none;
+  }
+
+  .metre-table select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* En carte, la teinte va sur le bord de la carte, pas sur chaque cellule. */
+  .metre-table tr.row-missing td,
+  .metre-table tr.row-warning td {
+    background: none;
+  }
+
+  .metre-table tr.row-missing {
+    border-left-color: var(--danger);
+  }
+
+  .metre-table tr.row-warning {
+    border-left-color: var(--warn);
+  }
+
+  .metre-table tr.flag-detail-row {
+    margin-top: -8px;
+  }
+
+  .metre-table tr.flag-detail-row td {
+    display: block;
+    border: 0;
+  }
+
+  .metre-table tr.flag-detail-row td::before {
+    display: none;
+  }
+
+  .metre-table td.empty {
+    display: block;
+  }
+
+  .metre-table td.empty::before {
+    display: none;
   }
 }

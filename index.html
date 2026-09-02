@@ -123,31 +123,31 @@
           </div>
         </div>
         <nav class="nav" aria-label="Navigation principale">
-          <button class="nav-item active" data-view="dashboard" aria-current="page" type="button">
+          <button class="nav-item active" data-view="dashboard" data-short="Bord" aria-current="page" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg>
             <span>Tableau de bord</span>
           </button>
-          <button class="nav-item" data-view="ouvrages" type="button">
+          <button class="nav-item" data-view="ouvrages" data-short="Ouvrages" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-ouvrages"></use></svg>
             <span>Ouvrages</span>
           </button>
-          <button class="nav-item" data-view="materiaux" type="button">
+          <button class="nav-item" data-view="materiaux" data-short="Matériaux" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-materiaux"></use></svg>
             <span>Matériaux</span>
           </button>
-          <button class="nav-item" data-view="devis" type="button">
+          <button class="nav-item" data-view="devis" data-short="Devis" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-devis"></use></svg>
             <span>Devis client</span>
           </button>
-          <button class="nav-item" data-view="metre" type="button">
+          <button class="nav-item" data-view="metre" data-short="Métré" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-metre"></use></svg>
             <span>Métré public</span>
           </button>
-          <button class="nav-item" data-view="chantiers" type="button">
+          <button class="nav-item" data-view="chantiers" data-short="Chantiers" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-chantiers"></use></svg>
             <span>Chantiers</span>
           </button>
-          <button class="nav-item" data-view="settings" type="button">
+          <button class="nav-item" data-view="settings" data-short="Réglages" type="button">
             <svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
             <span>Paramètres</span>
           </button>
@@ -172,18 +172,8 @@
             <p class="eyebrow">Mémoire de chiffrage</p>
             <h1 id="view-title">Tableau de bord</h1>
           </div>
-          <div class="toolbar">
-            <button class="ghost" id="reload-catalog" type="button">Compléter le catalogue</button>
-            <button class="ghost danger" id="reset-all" type="button">Tout réinitialiser</button>
-            <label class="file-button">
-              Importer JSON
-              <input id="import-data" type="file" accept=".json" />
-            </label>
-            <button class="primary" id="export-data" type="button">Exporter les données</button>
-          </div>
         </header>
 
-        <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
         <!-- Tableau de bord ------------------------------------------------ -->
         <section class="view active" id="dashboard">
@@ -534,6 +524,22 @@
             </div>
             <button class="primary" type="submit">Mettre à jour</button>
           </form>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Données</h2>
+            </div>
+            <p>Sauvegarde complète (ouvrages, matériaux, devis, chantiers, réglages) et remise à zéro.</p>
+            <div class="form-actions">
+              <button class="primary" id="export-data" type="button">Exporter les données</button>
+              <label class="file-button">
+                Importer JSON
+                <input id="import-data" type="file" accept=".json" />
+              </label>
+              <button class="ghost" id="reload-catalog" type="button">Compléter le catalogue</button>
+              <button class="ghost danger" id="reset-all" type="button">Tout réinitialiser</button>
+            </div>
+          </section>
         </section>
 
         <!-- Devis client ---------------------------------------------------- -->
@@ -596,10 +602,17 @@
         <!-- Métré public ---------------------------------------------------- -->
         <section class="view" id="metre">
           <div class="metre-grid">
-            <section class="panel">
-              <div class="panel-head">
-                <h2>1. Importer le métré</h2>
-              </div>
+            <!--
+              Reglage du metre : replie automatiquement apres une analyse reussie
+              (app.js), pour que le tableau des correspondances occupe l'ecran — c'est
+              lui qu'on travaille ensuite, pas le choix des colonnes.
+            -->
+            <details class="panel metre-setup" id="metre-setup" open>
+              <summary>
+                <span class="setup-title">1. Importer le métré et vérifier les colonnes</span>
+                <span class="setup-state" id="metre-setup-state">Aucun métré chargé</span>
+              </summary>
+
               <div class="upload-zone">
                 <input id="metre-file" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv" />
                 <p>Fichier Excel ou CSV du pouvoir adjudicateur. Les feuilles multiples sont lues, la feuille « récapitulatif » est ignorée.</p>
@@ -609,14 +622,11 @@
               <label>Commune / pouvoir adjudicateur
                 <input id="metre-commune" type="text" list="metre-communes-connues" placeholder="ex. Schaerbeek" />
                 <small id="metre-commune-alerte" class="field-alert" hidden></small>
-                <small>Les codes de métré appris (« Confirmer et mémoriser ») restent propres à cette commune : deux
-                  communes qui réutilisent le même numéro de poste pour des ouvrages différents ne s’écrasent plus.</small>
+                <small>Les codes de métré appris restent propres à cette commune.</small>
               </label>
               <datalist id="metre-communes-connues"></datalist>
 
-              <div class="panel-head">
-                <h2>2. Vérifier les colonnes</h2>
-              </div>
+              <h3 class="setup-subtitle">Colonnes détectées</h3>
               <div class="field-map">
                 <label>Poste / numéro<select id="map-poste"></select></label>
                 <label>Désignation<select id="map-description"></select></label>
@@ -626,13 +636,12 @@
               </div>
               <div class="form-actions">
                 <button class="primary" id="analyse-metre" type="button">Analyser le métré</button>
-                <button class="ghost" id="confirm-matches" type="button">Confirmer et mémoriser</button>
               </div>
-            </section>
+            </details>
 
             <section class="panel">
               <div class="panel-head">
-                <h2>3. Contrôler les correspondances</h2>
+                <h2>2. Contrôler les correspondances</h2>
               </div>
 
               <div class="group-summary">
@@ -670,6 +679,14 @@
                 </div>
               </div>
 
+              <!-- Ce que veut dire chaque pastille : sans ça, la moitie du tableau
+                   affiche un pourcentage orange que rien n'explique. -->
+              <ul class="metre-legend">
+                <li><span class="match high">code connu</span> code mémorisé ou correspondance confirmée</li>
+                <li><span class="match medium">libellé 72 %</span> proposé d’après le libellé, à vérifier</li>
+                <li><span class="match none">à traiter</span> aucun ouvrage d’unité compatible</li>
+              </ul>
+
               <div class="table-wrap metre-table">
                 <table>
                   <thead>
@@ -688,6 +705,7 @@
               </div>
 
               <div class="form-actions">
+                <button class="ghost" id="confirm-matches" type="button">Confirmer et mémoriser</button>
                 <button class="primary" id="export-metre-source" type="button">Compléter le fichier reçu</button>
                 <button class="ghost" id="export-metre-xlsx" type="button">Récapitulatif Excel</button>
                 <button class="ghost" id="export-metre" type="button">Récapitulatif CSV</button>
@@ -698,6 +716,12 @@
           </div>
         </section>
       </main>
+
+      <!-- Hors du flux : ancre en bas de l'ecran, toujours visible (cf. .toast). -->
+      <div id="toast" class="toast" role="status" aria-live="polite">
+        <span id="toast-text"></span>
+        <button type="button" id="toast-close" class="toast-close" aria-label="Fermer le message">×</button>
+      </div>
     </div>
   </body>
 </html>

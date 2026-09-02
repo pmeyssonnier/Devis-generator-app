@@ -361,11 +361,19 @@
   let notifyTimer = 0;
   function notify(message, kind) {
     const zone = $("#toast");
-    if (!zone) return;
-    zone.textContent = message;
+    const texte = $("#toast-text");
+    if (!zone || !texte) return;
+    texte.textContent = message;
     zone.className = `toast visible ${kind || "info"}`;
     clearTimeout(notifyTimer);
-    notifyTimer = setTimeout(() => zone.classList.remove("visible"), 6000);
+    // Une erreur demande de lire puis d'agir : elle reste deux fois plus longtemps
+    // qu'une simple confirmation, et se ferme d'un clic dans tous les cas.
+    notifyTimer = setTimeout(() => zone.classList.remove("visible"), kind === "info" || !kind ? 6000 : 12000);
+  }
+
+  function hideToast() {
+    clearTimeout(notifyTimer);
+    $("#toast")?.classList.remove("visible");
   }
 
   /* --------------------------------------------------------------------- rendu */
@@ -704,8 +712,29 @@
     cible.textContent = `${euro.format(total)} de matériaux par unité`;
   }
 
+  /*
+   * Options du selecteur d'un poste de metre, limitees aux ouvrages dont l'unite est
+   * compatible avec lui : chercher dans 52 entrees triees par nom n'aide pas a
+   * choisir, cinq ou six si. L'ouvrage deja retenu reste toujours propose, meme s'il
+   * ne passe plus le filtre (donnees anciennes).
+   */
+  const optionsParUnite = new Map();
+  function ouvrageOptionsFor(row) {
+    const cle = `${C.normalizeUnit(row.unite)}|${Number(row.quantite) === 1 ? "1" : "n"}|${row.ouvrageId || ""}`;
+    const memo = optionsParUnite.get(cle);
+    if (memo !== undefined) return memo;
+    const html = state.ouvrages
+      .filter((ouvrage) => ouvrage.id === row.ouvrageId || C.unitsCompatible(ouvrage.unite, row.unite, row.quantite))
+      .sort((a, b) => a.nom.localeCompare(b.nom, "fr"))
+      .map((ouvrage) => `<option value="${ouvrage.id}">${esc(ouvrage.nom)} (${esc(ouvrage.unite)})</option>`)
+      .join("");
+    optionsParUnite.set(cle, html);
+    return html;
+  }
+
   let ouvrageOptionsHtml = "";
   function renderOuvrageOptions() {
+    optionsParUnite.clear();
     ouvrageOptionsHtml = [...state.ouvrages]
       .sort((a, b) => a.nom.localeCompare(b.nom, "fr"))
       .map((o) => `<option value="${o.id}">${esc(o.nom)} (${esc(o.unite)})</option>`)
@@ -1200,39 +1229,135 @@
           .map((row, index) => {
             const prix = metreRowPrice(row);
             const classes = [];
-            if (row.unitWarning) classes.push("row-warning");
-            else if (row.pourMemoire) {
-              // Statut normal pour ce type de poste, rattache a un ouvrage ou non,
-              // quantite renseignee ou non : pas de mise en evidence rouge/orange.
-            } else if (!row.ouvrageId) classes.push("row-missing");
+            // Une seule couleur par ligne : rouge quand rien n'est chiffrable en
+            // l'etat, ambre quand seule la quantite manque. Un poste "pour memoire"
+            // n'est pas une anomalie, quel que soit son etat.
+            if (row.pourMemoire && !row.unitWarning) {
+              /* statut normal de ce type de poste */
+            } else if (row.unitWarning || !row.ouvrageId) classes.push("row-missing");
             else if (!row.quantiteOk) classes.push("row-warning");
             return `<tr class="${classes.join(" ")}">
-              <td>${esc(row.numero)}</td>
-              <td>${esc(row.description)}</td>
-              <td>${esc(row.unite)}${
+              <td data-label="Poste" class="compact">${esc(row.numero)}</td>
+              <td data-label="Désignation">${esc(row.description)}</td>
+              <td data-label="Unité" class="compact">${esc(row.unite)}${
                 row.unitWarning
-                  ? ` <button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="unite" aria-label="Détail de l’incompatibilité d’unité">!</button>`
+                  ? ` <button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="unite" aria-expanded="false" aria-label="Détail de l’incompatibilité d’unité">!</button>`
                   : ""
               }</td>
-              <td>${
+              <td data-label="Quantité" class="compact">${
                 row.quantiteOk
                   ? number.format(row.quantite)
                   : row.pourMemoire
                     ? "—"
-                    : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
+                    : `<button type="button" class="flag warn" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-expanded="false" aria-label="Détail sur la quantité manquante">?</button>`
               }</td>
-              <td><select data-metre-match="${index}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsHtml}</select></td>
-              <td>${matchBadge(row, index)}</td>
-              <td>${prix ? euro.format(prix) : "-"}</td>
+              <td data-label="Ouvrage"><select data-metre-match="${index}" aria-label="Ouvrage pour le poste ${esc(row.numero)}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsFor(row)}</select></td>
+              <td data-label="Confiance">${matchBadge(row, index)}</td>
+              <td data-label="Montant" class="compact">${prix ? euro.format(prix) : "-"}</td>
             </tr>`;
           })
           .join("")
       : `<tr><td colspan="7" class="empty">Aucun métré analysé.</td></tr>`;
 
-    // Selection appliquee apres coup : evite de reconstruire les options par ligne.
+    // Selection appliquee apres coup : les options sont construites par unite, pas
+    // par ligne, donc l'ouvrage retenu doit etre repose ici.
     document.querySelectorAll("#metre-lines select[data-metre-match]").forEach((select) => {
       select.value = analysed[Number(select.dataset.metreMatch)]?.ouvrageId || "";
     });
+
+    // Resume visible sur le bloc replie : on doit savoir ce qui est charge sans
+    // avoir a le rouvrir.
+    const etatSetup = $("#metre-setup-state");
+    if (etatSetup) {
+      etatSetup.textContent = !state.metre.fileName
+        ? "Aucun métré chargé"
+        : analysed.length
+          ? `${state.metre.fileName} · ${analysed.length} poste(s) analysé(s)`
+          : `${state.metre.fileName} · ${state.metre.rows.length} poste(s) lu(s), analyse à lancer`;
+    }
+
+    // Le nombre de propositions dit d'un coup d'oeil s'il reste quelque chose a
+    // confirmer, sans ouvrir la boite de dialogue.
+    const boutonConfirmer = $("#confirm-matches");
+    if (boutonConfirmer) {
+      const propositions = analysed.filter((row) => row.ouvrageId && !row.manual).length;
+      boutonConfirmer.textContent = propositions
+        ? `Confirmer et mémoriser (${propositions})`
+        : "Confirmer et mémoriser";
+    }
+  }
+
+  function flagMessage(row, kind) {
+    if (kind === "quantite") {
+      return (
+        `Quantité absente ou nulle dans le fichier importé pour le poste « ${row.numero} ». Ce poste ne peut pas ` +
+        "être chiffré tant qu’une quantité n’est pas renseignée : corrigez le fichier source (ou obtenez la " +
+        "quantité manquante) puis réimportez-le."
+      );
+    }
+    const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
+    if (suggestion && (C.isForfaitUnit(suggestion.unite) || C.isForfaitUnit(row.unite))) {
+      return (
+        `Forfait contre quantité : le poste « ${row.numero} » est en « ${row.unite || "?"} » × ` +
+        `${number.format(row.quantite)}, l’ouvrage le plus proche (« ${suggestion.nom} ») est un forfait ` +
+        `(${suggestion.unite}). Un prix global ne se multiplie pas par une quantité : créez un ouvrage à l’unité ` +
+        "du poste, ou, si c’est bien un forfait, ramenez la quantité à 1 dans le fichier."
+      );
+    }
+    if (suggestion) {
+      return (
+        `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche ` +
+        `(« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas ` +
+        `être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou ` +
+        "créez-en un nouveau dans la bibliothèque."
+      );
+    }
+    return `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`;
+  }
+
+  /*
+   * Ouvre l'explication d'un drapeau juste sous sa ligne, et la referme au clic
+   * suivant. Elle etait envoyee au message general, ancre en haut de la page : sur
+   * telephone il s'affichait plus de 3 000 px au-dessus du poste concerne, donc
+   * cliquer sur « ! » ne montrait rien. Ici elle reste sous les yeux le temps de
+   * corriger. Une seule ouverte a la fois.
+   */
+  function toggleFlagDetail(bouton, index, kind) {
+    const row = state.metre.analysed[index];
+    const ligne = bouton.closest("tr");
+    if (!row || !ligne) return;
+    const suivante = ligne.nextElementSibling;
+    const dejaOuverte = suivante && suivante.classList.contains("flag-detail-row");
+    document.querySelectorAll("#metre-lines tr.flag-detail-row").forEach((element) => element.remove());
+    document
+      .querySelectorAll('#metre-lines .flag[aria-expanded="true"]')
+      .forEach((element) => element.setAttribute("aria-expanded", "false"));
+    if (dejaOuverte) return;
+
+    const detail = document.createElement("tr");
+    detail.className = kind === "unite" ? "flag-detail-row danger" : "flag-detail-row";
+    const cellule = document.createElement("td");
+    cellule.colSpan = 7;
+    cellule.textContent = flagMessage(row, kind);
+    detail.append(cellule);
+    ligne.after(detail);
+    bouton.setAttribute("aria-expanded", "true");
+  }
+
+  // Applique l'ouvrage que l'analyse a designe comme le plus proche.
+  function applySuggestion(index) {
+    const row = state.metre.analysed[index];
+    if (!row) return;
+    const ouvrage = ouvrageById(row.suggestionId || row.ouvrageId);
+    if (!ouvrage) return;
+    if (!C.unitsCompatible(ouvrage.unite, row.unite, row.quantite)) {
+      notify(`« ${ouvrage.nom} » (${ouvrage.unite}) ne peut pas chiffrer ce poste.`, "danger");
+      return;
+    }
+    confirmerLigne(row, ouvrage);
+    saveState();
+    render();
+    notify(`Poste « ${row.numero} » rattaché à « ${ouvrage.nom} » et mémorisé.`, "info");
   }
 
   function matchBadge(row, index) {
@@ -1246,15 +1371,29 @@
     // une correspondance valable, quelle que soit sa confiance mémorisée.
     if (!row.ouvrageId || row.unitWarning) {
       const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
-      const creerBouton = row.pourMemoire
-        ? ""
-        : `<button type="button" class="ghost create-ouvrage" data-metre-create-ouvrage="${index}">Créer un ouvrage à partir de ce poste</button>`;
-      return suggestion
-        ? `<span class="match none">à traiter</span><small>proche : ${esc(suggestion.nom)}</small>${creerBouton}`
-        : `<span class="match none">à traiter</span>${creerBouton}`;
+      const blocs = [`<span class="match none">à traiter</span>`];
+      if (suggestion && C.unitsCompatible(suggestion.unite, row.unite, row.quantite)) {
+        // L'app a deja identifie le plus proche : un clic doit suffire a l'appliquer,
+        // au lieu d'aller le rechercher a la main dans la liste.
+        blocs.push(
+          `<button type="button" class="ghost apply-suggestion" data-metre-apply="${index}">Utiliser « ${esc(suggestion.nom)} »</button>`,
+        );
+      } else if (suggestion) {
+        blocs.push(`<small>proche : ${esc(suggestion.nom)} (${esc(suggestion.unite)}), unité incompatible</small>`);
+      }
+      if (!row.pourMemoire) {
+        blocs.push(
+          `<button type="button" class="ghost create-ouvrage" data-metre-create-ouvrage="${index}">Créer un ouvrage à partir de ce poste</button>`,
+        );
+      }
+      return blocs.join("");
     }
-    const level = row.confidence >= 0.99 ? "high" : row.confidence >= 0.55 ? "medium" : "low";
-    return `<span class="match ${level}">${percent.format(row.confidence)}</span><small>${esc(row.reason || "")}</small>`;
+    // Vert : la correspondance est certaine (code memorise ou confirmation manuelle).
+    // Ambre : proposition d'apres le libelle, a verifier. C'est ce que dit la legende
+    // au-dessus du tableau — un pourcentage seul n'apprenait rien a personne.
+    return row.confidence >= 0.99
+      ? `<span class="match high">${esc(row.reason || "confirmé")}</span>`
+      : `<span class="match medium">libellé ${percent.format(row.confidence)}</span>`;
   }
 
   /* ------------------------------------------------------- import et analyse */
@@ -1382,6 +1521,11 @@
     state.metre.alerts = alerts;
     saveState();
     render();
+    // Le reglage a fait son travail : on replie, c'est le tableau qu'on corrige
+    // ensuite — sur telephone il commencait sinon a plus d'un ecran de defilement.
+    const setup = $("#metre-setup");
+    if (setup) setup.open = false;
+    $(".metre-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
     const chiffres = state.metre.analysed.filter((row) => row.ouvrageId).length;
     notify(`${chiffres} poste(s) sur ${state.metre.analysed.length} rapproché(s) automatiquement.`, "info");
   }
@@ -1494,6 +1638,13 @@
     const ouvrage = ouvrageById(ouvrageId);
     if (!ouvrage) return { status: "aucun", row };
     if (!C.unitsCompatible(ouvrage.unite, row.unite, row.quantite)) return { status: "unite", row, ouvrage };
+    confirmerLigne(row, ouvrage);
+    return { status: "ok", row, ouvrage };
+  }
+
+  // Un seul endroit ou une ligne devient une correspondance confirmee : choix
+  // manuel, suggestion appliquee ou rattachement apres creation d'un ouvrage.
+  function confirmerLigne(row, ouvrage) {
     row.ouvrageId = ouvrage.id;
     row.manual = true;
     row.confidence = 1;
@@ -1501,7 +1652,6 @@
     row.suggestionId = "";
     row.unitWarning = false;
     learnMatch(row);
-    return { status: "ok", row, ouvrage };
   }
 
   function messageRattachementUnite(lien) {
@@ -1720,6 +1870,9 @@
     });
     document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === name));
     $("#view-title").textContent = VIEW_LABELS[name];
+    // Sur telephone la navigation occupe tout le premier ecran : sans ceci, changer
+    // de vue laissait l'utilisateur devant le meme menu.
+    window.scrollTo({ top: 0 });
   }
 
   document.querySelectorAll(".nav-item").forEach((button) => {
@@ -2111,27 +2264,10 @@
       return;
     }
     if (data.metreFlagRow !== undefined) {
-      const row = state.metre.analysed[Number(data.metreFlagRow)];
-      if (!row) return;
-      if (data.metreFlagKind === "unite") {
-        const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
-        const forfait = suggestion && (C.isForfaitUnit(suggestion.unite) || C.isForfaitUnit(row.unite));
-        notify(
-          forfait
-            ? `Forfait contre quantité : le poste « ${row.numero} » est en « ${row.unite || "?"} » × ${number.format(row.quantite)}, l’ouvrage le plus proche (« ${suggestion.nom} ») est un forfait (${suggestion.unite}). Un prix global ne se multiplie pas par une quantité : créez un ouvrage à l’unité du poste, ou, si c’est bien un forfait, ramenez la quantité à 1 dans le fichier.`
-            : suggestion
-              ? `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche (« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou créez-en un nouveau dans la bibliothèque.`
-              : `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`,
-          "danger",
-        );
-      } else if (data.metreFlagKind === "quantite") {
-        notify(
-          `Quantité absente ou nulle dans le fichier importé pour le poste « ${row.numero} ». Ce poste ne peut pas être chiffré tant qu’une quantité n’est pas renseignée : corrigez le fichier source (ou obtenez la quantité manquante) puis réimportez-le.`,
-          "danger",
-        );
-      }
+      toggleFlagDetail(target, Number(data.metreFlagRow), data.metreFlagKind);
       return;
     }
+    if (data.metreApply !== undefined) return applySuggestion(Number(data.metreApply));
     if (data.metreCreateOuvrage !== undefined) return startOuvrageCreationFromMetreRow(data.metreCreateOuvrage);
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
     if (data.confirmPrixMateriau) return confirmerPrixMateriau(data.confirmPrixMateriau);
@@ -2457,6 +2593,10 @@
       populateFieldMap(headers);
       saveState();
       render();
+      // Le bloc s'etait replie apres l'analyse precedente : un nouveau fichier veut
+      // dire nouvelles colonnes a verifier, et « Analyser le métré » est dedans.
+      const setup = $("#metre-setup");
+      if (setup) setup.open = true;
       if (rows.length) notify(`${rows.length} poste(s) lu(s). Vérifiez les colonnes puis lancez l’analyse.`, "info");
     } catch (error) {
       notify(`Lecture impossible : ${error.message}`, "danger");
@@ -2481,6 +2621,8 @@
       );
     }
   });
+
+  $("#toast-close").addEventListener("click", hideToast);
 
   $("#analyse-metre").addEventListener("click", analyseMetre);
   $("#export-metre-source").addEventListener("click", exportMetreSource);
