@@ -171,18 +171,41 @@
 
     const ouvrageIds = new Set(next.ouvrages.map((ouvrage) => ouvrage.id));
     next.mappingCommunes = {};
+    const conflitsMigration = [];
     Object.entries(source.mappingCommunes || {}).forEach(([commune, codes]) => {
       const communeKey = String(commune || "").trim();
       if (!communeKey || !codes || typeof codes !== "object") return;
-      const clean = {};
+      // "Schaerbeek" / "schaerbeek" / "SCHAERBEEK" fusionnent dans le premier profil
+      // rencontré, au lieu de rester des communes distinctes (donnees anciennes ou
+      // deja importees avant cette normalisation).
+      const normalise = C.normalizeText(communeKey);
+      const cleKey = Object.keys(next.mappingCommunes).find((key) => C.normalizeText(key) === normalise) || communeKey;
+      const clean = next.mappingCommunes[cleKey] || {};
       Object.entries(codes).forEach(([code, ouvrageId]) => {
         const codeKey = C.normalizeRef(code);
         // Un ouvrage supprime depuis emporte son mapping communal : sinon un code
         // pointerait vers un id qui n'existe plus, invisible jusqu'au prochain import.
-        if (codeKey && typeof ouvrageId === "string" && ouvrageIds.has(ouvrageId)) clean[codeKey] = ouvrageId;
+        if (!codeKey || typeof ouvrageId !== "string" || !ouvrageIds.has(ouvrageId)) return;
+        if (clean[codeKey] && clean[codeKey] !== ouvrageId) {
+          // Deux profils fusionnes (ex. "Schaerbeek"/"schaerbeek") portaient une
+          // correspondance differente pour le meme code : on garde la premiere
+          // rencontree plutot que d'ecraser silencieusement, et on le signale.
+          conflitsMigration.push(`${codeKey} (commune « ${cleKey} »)`);
+          return;
+        }
+        clean[codeKey] = ouvrageId;
       });
-      if (Object.keys(clean).length) next.mappingCommunes[communeKey] = clean;
+      if (Object.keys(clean).length) next.mappingCommunes[cleKey] = clean;
     });
+    if (conflitsMigration.length) {
+      // Cas rare (donnees anciennes deja incoherentes) : pas de UI dediee pour
+      // l'instant, mais au moins visible pour qui regarde la console au lieu de
+      // disparaitre sans trace.
+      console.warn(
+        `Conflit détecté pendant la fusion des communes homonymes : ${conflitsMigration.join(", ")}. ` +
+          "La première correspondance rencontrée a été conservée.",
+      );
+    }
 
     const devis = source.devis || {};
     next.devis = {
@@ -1229,7 +1252,10 @@
     const cache = new Map();
     const seenCodes = new Map();
     const commune = String(state.metre.commune || "").trim();
-    const communeCodes = commune ? state.mappingCommunes[commune] : null;
+    // Objet (meme vide) des qu'une commune est renseignee : signale a findMatch()
+    // qu'aucun retour au refsMetre global n'est autorise pour cet import, meme si
+    // cette commune n'a encore aucun code appris.
+    const communeCodes = commune ? state.mappingCommunes[resolveCommuneKey(commune)] || {} : null;
 
     state.metre.analysed = state.metre.rows.map((raw, index) => {
       const numero = String(raw[mapping.poste] ?? "").trim() || String(index + 1);
@@ -1289,6 +1315,17 @@
     notify(`${chiffres} poste(s) sur ${state.metre.analysed.length} rapproché(s) automatiquement.`, "info");
   }
 
+  // "Schaerbeek", "schaerbeek", "SCHAERBEEK" ne doivent pas devenir trois profils
+  // distincts : on reutilise la clef deja enregistree qui correspond une fois
+  // normalisee, sinon on cree une nouvelle clef avec la casse telle que tapee.
+  function resolveCommuneKey(commune) {
+    const saisie = String(commune || "").trim();
+    if (!saisie) return "";
+    const cle = C.normalizeText(saisie);
+    const existante = Object.keys(state.mappingCommunes).find((key) => C.normalizeText(key) === cle);
+    return existante || saisie;
+  }
+
   // Enregistre la correspondance choisie : elle sera reconnue au prochain marche.
   function learnMatch(row) {
     const ouvrage = ouvrageById(row.ouvrageId);
@@ -1303,8 +1340,9 @@
       // coincidemment le meme numero de poste pour des ouvrages differents ne
       // s'ecrasent plus l'une l'autre (contrairement au refsMetre global ci-dessous,
       // qui reste partage entre tous les marches).
-      if (!state.mappingCommunes[commune]) state.mappingCommunes[commune] = {};
-      state.mappingCommunes[commune][key] = ouvrage.id;
+      const communeKey = resolveCommuneKey(commune);
+      if (!state.mappingCommunes[communeKey]) state.mappingCommunes[communeKey] = {};
+      state.mappingCommunes[communeKey][key] = ouvrage.id;
       return;
     }
     // Aucune commune renseignee : comportement historique, sur le refsMetre global.
@@ -1327,10 +1365,15 @@
   const SIMILARITE_OUVRAGE_SEUIL = 0.55;
 
   function decrireProximiteOuvrage(payload, match) {
-    const pct = Math.round(match.score * 100);
+    const pct = (valeur) => (valeur === null || valeur === undefined ? "—" : `${Math.round(valeur * 100)} %`);
+    const d = match.detail;
     const lignes = [
       `Un ouvrage proche existe déjà dans la bibliothèque : « ${match.ouvrage.nom} » (${match.ouvrage.poste}).`,
-      `Proximité technique estimée : ${pct} % (libellé, matériaux, rendement, matériel).`,
+      `Proximité globale : ${pct(match.score)}`,
+      `  Libellé      : ${pct(d.textScore)}`,
+      `  Composition  : ${pct(d.composantScore)}`,
+      `  Rendement    : ${pct(d.rendementScore)}`,
+      `  Matériel     : ${pct(d.materielScore)}`,
       "",
       "Composition — existant → saisi :",
     ];

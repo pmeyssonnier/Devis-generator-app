@@ -476,6 +476,30 @@ test("sans table de commune, le comportement est inchange (retro-compatibilite)"
   assert.equal(match.reason, "code connu");
 });
 
+test("une commune active ne retombe jamais sur le refsMetre global pour un code qu'elle ne connait pas encore", () => {
+  // "2.05" est un code connu du catalogue (rattache a l'ouvrage a), mais la commune
+  // en cours n'a encore rien appris ({} : aucune entree, pas "pas de commune du
+  // tout"). Le refsMetre global appartient peut-etre a une tout autre codification :
+  // il ne doit pas etre applique comme une certitude ici.
+  const match = C.findMatch({ poste: "2.05", numero: "2.05", description: "", unite: "m2" }, ouvragesTest, new Map(), {});
+  assert.notEqual(match.ouvrageId, "a", "le refsMetre global ne doit pas s'appliquer des qu'une commune est active");
+  assert.equal(match.reason === "code connu", false);
+});
+
+test("une commune active retombe sur le libelle, pas sur le refsMetre global, pour un code inconnu d'elle", () => {
+  // Meme scenario, mais avec un libelle qui permet un vrai rapprochement par
+  // similarite : la commune ne connait pas "2.05", le refsMetre global est ignore,
+  // mais le libelle retrouve tout de meme le bon ouvrage — legitimement cette fois.
+  const match = C.findMatch(
+    { poste: "2.05", numero: "2.05", description: "Peinture des murs intérieurs", unite: "m2" },
+    ouvragesTest,
+    new Map(),
+    {},
+  );
+  assert.equal(match.ouvrageId, "b");
+  assert.equal(match.reason, "libellé");
+});
+
 test("a defaut de code, le libelle rapproche le bon ouvrage", () => {
   const match = C.findMatch(
     { poste: "99.99", numero: "99.99", description: "Mise en peinture des murs intérieurs", unite: "m²" },
@@ -582,9 +606,68 @@ test("une composition sensiblement differente donne un score plus bas", () => {
   assert.ok(score < scoreProche, "un ecart reel de composition doit se voir dans le score");
 });
 
+test("memes matieres mais dosages sans rapport : le score chute malgre un libelle et un rendement identiques", () => {
+  // Cas critique signale : mêmes materiauId (mortier/treillis/primaire), même
+  // libellé, même rendement et matériel, mais des quantités trois fois plus
+  // fortes. Un indice de Jaccard seul sur la presence des matieres donnerait
+  // 100 % ici — la proximite des quantites doit tirer le score vers le bas.
+  const brouillon = {
+    nom: facadeExistante.nom,
+    unite: "m2",
+    heures: facadeExistante.heures,
+    materiel: facadeExistante.materiel,
+    composants: [
+      { materiauId: "mortier", quantite: 20 },
+      { materiauId: "treillis", quantite: 3 },
+      { materiauId: "primaire", quantite: 1 },
+    ],
+  };
+  const score = C.ouvrageProximity(brouillon, facadeExistante);
+  // Le nom, le rendement et le matériel sont ici volontairement identiques : le
+  // score global reste donc porté par ces signaux-là (65 % du poids). Ce qui compte
+  // est que la composition, elle, ne mente plus : elle ne doit plus valoir 100 %.
+  assert.ok(score < 0.9, `un dosage 3x plus fort doit se voir dans le score global, obtenu ${score}`);
+
+  const brouillonProche = {
+    ...brouillon,
+    composants: [
+      { materiauId: "mortier", quantite: 8.7 },
+      { materiauId: "treillis", quantite: 1.1 },
+      { materiauId: "primaire", quantite: 0.2 },
+    ],
+  };
+  const scoreProche = C.ouvrageProximity(brouillonProche, facadeExistante);
+  assert.ok(
+    score < scoreProche - 0.1,
+    `un dosage tres different doit scorer nettement moins bien qu'un dosage quasi identique (${score} vs ${scoreProche})`,
+  );
+});
+
 test("une unite differente elimine toute proximite, quel que soit le libelle", () => {
   const brouillon = { nom: "Enduit de façade minéral armé", unite: "m", heures: 0.42, composants: facadeExistante.composants };
   assert.equal(C.ouvrageProximity(brouillon, facadeExistante), 0);
+});
+
+test("ouvrageProximityDetail expose le score par signal, pas seulement le total", () => {
+  // Meme cas critique que ci-dessus : le detail doit montrer que seule la
+  // composition s'ecarte, pas juste renvoyer un pourcentage global qui les noie.
+  const brouillon = {
+    nom: facadeExistante.nom,
+    unite: "m2",
+    heures: facadeExistante.heures,
+    materiel: facadeExistante.materiel,
+    composants: [
+      { materiauId: "mortier", quantite: 20 },
+      { materiauId: "treillis", quantite: 3 },
+      { materiauId: "primaire", quantite: 1 },
+    ],
+  };
+  const detail = C.ouvrageProximityDetail(brouillon, facadeExistante);
+  assert.ok(detail.textScore >= 0.98, "libelle identique");
+  assert.equal(detail.rendementScore, 1, "rendement identique");
+  assert.equal(detail.materielScore, 1, "materiel identique");
+  assert.ok(detail.composantScore < 0.7, `composition tres differente, obtenu ${detail.composantScore}`);
+  assert.equal(detail.score, C.ouvrageProximity(brouillon, facadeExistante), "coherent avec ouvrageProximity");
 });
 
 test("bestOuvrageMatch retient le candidat le plus proche parmi le catalogue", () => {
@@ -594,6 +677,8 @@ test("bestOuvrageMatch retient le candidat le plus proche parmi le catalogue", (
     [facadeExistante, autre],
   );
   assert.equal(best.ouvrage.id, "fac003");
+  assert.ok(best.detail, "le detail par signal doit accompagner le meilleur candidat");
+  assert.equal(best.detail.score, best.score);
 });
 
 test("bestOuvrageMatch renvoie null s'il n'y a aucun candidat de meme unite", () => {
