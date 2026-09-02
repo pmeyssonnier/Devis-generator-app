@@ -3,6 +3,8 @@ name: Déploiement GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,12 +12,16 @@ permissions:
   pages: write
   id-token: write
 
-# Un nouveau push annule le déploiement en cours plutôt que de s'empiler derrière lui.
+# Un nouveau push annule le run en cours sur la meme branche/PR plutot que de
+# s'empiler derriere lui — sans annuler celui d'une autre branche/PR en parallele
+# (groupe par ref, pas un seul groupe global partage entre toutes les PR).
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Tourne aussi sur les PR : la suite de tests est visible comme verification
+  # avant fusion, pas seulement rejouee apres coup lors du deploiement.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +33,9 @@ jobs:
 
   deploy:
     needs: test
+    # Jamais sur une PR : seul un push reel (ou un declenchement manuel) sur main
+    # publie le site.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
