@@ -1665,3 +1665,68 @@ tr.flag-detail-row.danger td {
     flex: 1;
   }
 }
+
+/* ---------------------------------------------- historique des métrés (S4) */
+
+.setup-hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.archive-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.archive-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.archive-list .archive-nom {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.archive-list strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.archive-list small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.archive-list .archive-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.archive-list button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .archive-list button {
+    min-height: 44px;
+  }
+}
+
+.archive-list li.courant {
+  border-color: var(--accent);
+  background: var(--soft);
+}

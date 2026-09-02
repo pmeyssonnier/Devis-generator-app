@@ -11,7 +11,7 @@
  * documente comme dependant d'une connexion, l'import/export CSV et JSON
  * restant disponibles sans elle.
  */
-const CACHE_NAME = "devis-shell-v2";
+const CACHE_NAME = "devis-shell-v3";
 
 const APP_SHELL = [
   "./",
@@ -19,6 +19,7 @@ const APP_SHELL = [
   "app.js",
   "core.js",
   "catalog.js",
+  "db.js",
   "styles.css",
   "favicon.svg",
   "manifest.webmanifest",

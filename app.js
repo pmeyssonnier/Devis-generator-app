@@ -32,13 +32,17 @@
     settings: "Paramètres",
   };
 
-  // Classeur d'origine du dernier metre importe : garde en memoire uniquement,
-  // il permet de rendre au pouvoir adjudicateur son propre fichier complete.
-  let sourceWorkbook = null;
-  // Octets d'origine intacts : chaque export en repart, pour ne jamais publier un
-  // prix ecrit lors d'un export precedent et jamais retire depuis (cf. exportMetreSource).
+  /*
+   * Octets d'origine intacts du dernier metre importe : chaque export en repart, pour
+   * ne jamais publier un prix ecrit lors d'un export precedent et jamais retire depuis
+   * (cf. exportMetreSource). Ils sont aussi ranges dans IndexedDB (db.js) : sans ça,
+   * refermer l'application obligeait a reimporter le fichier — et donc a refaire toute
+   * l'analyse — pour pouvoir le completer.
+   */
   let sourceArrayBuffer = null;
   let sourceFileName = "";
+  // Liste des metres deja chiffres, sans leurs donnees lourdes (cf. db.js).
+  let metreArchives = [];
 
   let editingMateriauId = "";
   let editingOuvrageId = "";
@@ -108,6 +112,7 @@
   }
 
   function saveState() {
+    planifierArchivage();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       return true;
@@ -1067,7 +1072,7 @@
       ? `<strong>${esc(state.metre.fileName)}</strong> — ${state.metre.rows.length} poste(s) lu(s)${
           state.metre.skipped ? `, ${state.metre.skipped} ligne(s) ignorée(s)` : ""
         }${analysed.length ? ` · ${chiffres}/${analysed.length} chiffré(s) · total ${euro.format(total)}` : ""}${
-          sourceWorkbook && sourceFileName === state.metre.fileName
+          sourceArrayBuffer && sourceFileName === state.metre.fileName
             ? ""
             : `<br /><em>Classeur d’origine non disponible : réimportez le fichier pour le compléter.</em>`
         }`
@@ -1159,6 +1164,29 @@
         : analysed.length
           ? `${state.metre.fileName} · ${analysed.length} poste(s) analysé(s)`
           : `${state.metre.fileName} · ${state.metre.rows.length} poste(s) lu(s), analyse à lancer`;
+    }
+
+    const blocArchives = $("#metre-archives-bloc");
+    if (blocArchives) {
+      blocArchives.hidden = !metreArchives.length;
+      $("#metre-archives").innerHTML = metreArchives
+        .map((archive) => {
+          const courant = archive.id === state.metre.id;
+          const resume = archive.resume || {};
+          return `<li class="${courant ? "courant" : ""}">
+            <span class="archive-nom">
+              <strong>${esc(archive.fileName || "Métré")}</strong>
+              <small>${esc(archive.commune || "sans commune")} · ${new Date(archive.date).toLocaleDateString("fr-BE")} · ${
+                resume.chiffres ?? 0
+              }/${resume.postes ?? 0} chiffré(s) · ${euro.format(resume.total || 0)}${courant ? " · en cours" : ""}</small>
+            </span>
+            <span class="archive-actions">
+              ${courant ? "" : `<button type="button" class="ghost" data-metre-rouvrir="${esc(archive.id)}">Rouvrir</button>`}
+              <button type="button" class="ghost danger" data-metre-supprimer-archive="${esc(archive.id)}">Retirer</button>
+            </span>
+          </li>`;
+        })
+        .join("");
     }
 
     // Le nombre de propositions dit d'un coup d'oeil s'il reste quelque chose a
@@ -1316,10 +1344,26 @@
       notify("Chargez d’abord un métré.", "danger");
       return;
     }
+    const commune = String(state.metre.commune || "").trim();
+    if (!commune) {
+      // Sans commune, les codes du catalogue de depart s'appliqueraient comme des
+      // certitudes a 100 % : c'est l'origine de l'affaire « 09.04 », ou un poste bien
+      // reel disparaissait derriere un ouvrage sans rapport. Chaque marche construit
+      // desormais sa propre codification.
+      const setup = $("#metre-setup");
+      if (setup) setup.open = true;
+      const champ = $("#metre-commune");
+      champ?.focus();
+      champ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      notify(
+        "Indiquez la commune ou le pouvoir adjudicateur avant d’analyser : les codes de métré appris lui restent propres.",
+        "danger",
+      );
+      return;
+    }
     const mapping = mappingSelectors();
     state.metre.mapping = mapping;
 
-    const commune = String(state.metre.commune || "").trim();
     // Objet (meme vide) des qu'une commune est renseignee : signale a findMatch()
     // qu'aucun retour au refsMetre global n'est autorise pour cet import, meme si
     // cette commune n'a encore aucun code appris.
@@ -1433,6 +1477,88 @@
       `Le poste « ${lien.row.numero} » (${lien.row.unite || "unité ?"}) n’a pas été rattaché : ` +
       `l’ouvrage est en « ${lien.ouvrage.unite} », unité incompatible. Rattachez-le manuellement dans le métré.`
     );
+  }
+
+  /* --------------------------------------------------------------- historique */
+
+  /*
+   * Le metre en cours est tenu a jour dans l'historique (IndexedDB), pas seulement
+   * archive au moment de le quitter : une page fermee par accident ne doit rien
+   * couter. saveState() planifie l'ecriture, groupee pour ne pas recopier les lignes
+   * a chaque frappe.
+   */
+  let archivageTimer = 0;
+  function planifierArchivage() {
+    if (!state.metre.id || !state.metre.analysed.length) return;
+    clearTimeout(archivageTimer);
+    archivageTimer = setTimeout(archiverMetreCourant, 1500);
+  }
+
+  async function archiverMetreCourant() {
+    if (!state.metre.id || !state.metre.analysed.length) return;
+    const entree = {
+      id: state.metre.id,
+      fileName: state.metre.fileName,
+      commune: state.metre.analysedCommune || state.metre.commune || "",
+      date: Date.now(),
+      resume: C.resumeMetre(state.metre, metreRowPrice),
+      // Copie : l'etat continue de vivre apres l'archivage, l'archive doit rester
+      // celle du moment ou elle a ete ecrite.
+      metre: JSON.parse(JSON.stringify(state.metre)),
+      source: sourceArrayBuffer || null,
+    };
+    if (!(await DGStore.saveArchive(entree))) return;
+    metreArchives = await DGStore.listArchives();
+    renderMetre();
+  }
+
+  // Rouvre un metre archive : lignes, analyse, colonnes et fichier recu.
+  async function rouvrirMetre(id) {
+    const archive = await DGStore.loadArchive(id);
+    if (!archive || !archive.metre) {
+      notify("Ce métré n’est plus disponible dans l’historique.", "danger");
+      return;
+    }
+    await archiverMetreCourant();
+    state.metre = normalizeState({ ...state, metre: archive.metre }).metre;
+    sourceArrayBuffer = archive.source || null;
+    sourceFileName = sourceArrayBuffer ? archive.fileName || "" : "";
+    creatingOuvrageForMetreRow = -1;
+    await DGStore.saveSource(state.metre.id, sourceFileName, sourceArrayBuffer);
+    populateFieldMap(Object.keys(state.metre.rows[0] || {}));
+    appliquerMappingAuxSelects();
+    saveState();
+    render();
+    goToView("metre");
+    const setup = $("#metre-setup");
+    if (setup) setup.open = false;
+    notify(
+      `Métré « ${archive.fileName} » rouvert${sourceArrayBuffer ? "" : " — le fichier d’origine n’a pas été retrouvé"}.`,
+      sourceArrayBuffer ? "info" : "warning",
+    );
+  }
+
+  async function supprimerArchive(id) {
+    const archive = metreArchives.find((entree) => entree.id === id);
+    if (!window.confirm(`Retirer « ${archive?.fileName || "ce métré"} » de l’historique ?`)) return;
+    await DGStore.deleteArchive(id);
+    metreArchives = await DGStore.listArchives();
+    renderMetre();
+  }
+
+  // Colonnes choisies : reposees sur les selecteurs apres un import ou une reouverture.
+  function appliquerMappingAuxSelects() {
+    const mapping = state.metre.mapping || {};
+    Object.entries({
+      "#map-poste": mapping.poste,
+      "#map-description": mapping.description,
+      "#map-unite": mapping.unite,
+      "#map-quantite": mapping.quantite,
+      "#map-prix": mapping.prixUnitaire,
+    }).forEach(([selecteur, valeur]) => {
+      const select = $(selecteur);
+      if (select && valeur) select.value = valeur;
+    });
   }
 
   /* ------------------------------------------------------------------ exports */
@@ -2042,6 +2168,14 @@
       return;
     }
     if (data.metreApply !== undefined) return applySuggestion(Number(data.metreApply));
+    if (data.metreRouvrir) {
+      rouvrirMetre(data.metreRouvrir);
+      return;
+    }
+    if (data.metreSupprimerArchive) {
+      supprimerArchive(data.metreSupprimerArchive);
+      return;
+    }
     if (data.metreCreateOuvrage !== undefined) return startOuvrageCreationFromMetreRow(data.metreCreateOuvrage);
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
     if (data.confirmPrixMateriau) return confirmerPrixMateriau(data.confirmPrixMateriau);
@@ -2314,18 +2448,17 @@
       let rows = [];
       let skipped = 0;
       let headers = [];
-      // Variables locales : sourceWorkbook/sourceArrayBuffer/sourceFileName ne sont
-      // remplaces qu'une fois la lecture entierement reussie. Sans ça, un fichier
-      // corrompu pouvait laisser sourceArrayBuffer pointer vers les octets invalides
-      // pendant que l'ancien metre restait affiche — un « Compléter le fichier reçu »
-      // ulterieur aurait alors tente de relire ces octets et echoue silencieusement.
-      let nextWorkbook = null;
+      // Variable locale : sourceArrayBuffer/sourceFileName ne sont remplaces qu'une
+      // fois la lecture entierement reussie. Sans ça, un fichier corrompu pouvait
+      // laisser sourceArrayBuffer pointer vers les octets invalides pendant que
+      // l'ancien metre restait affiche — un « Compléter le fichier reçu » ulterieur
+      // aurait alors tente de relire ces octets et echoue silencieusement.
       let nextArrayBuffer = null;
 
       if (["xlsx", "xlsm", "xls"].includes(extension)) {
         if (!requireXlsx()) return;
         nextArrayBuffer = await file.arrayBuffer();
-        nextWorkbook = XLSX.read(nextArrayBuffer, { cellFormula: true, cellStyles: true });
+        const nextWorkbook = XLSX.read(nextArrayBuffer, { cellFormula: true, cellStyles: true });
         nextWorkbook.SheetNames.forEach((sheetName) => {
           if (C.normalizeText(sheetName).includes("recap")) return;
           const sheet = nextWorkbook.Sheets[sheetName];
@@ -2351,12 +2484,17 @@
       if (!rows.length) {
         notify("Aucune ligne exploitable : vérifiez que le fichier contient désignation, unité et quantité.", "danger");
       }
-      sourceWorkbook = nextWorkbook;
+      // Le metre en cours part dans l'historique AVANT que les octets en memoire ne
+      // soient remplaces : archive apres coup, il repartirait avec le classeur du
+      // marche suivant, et sa reouverture ne retrouverait plus aucune de ses feuilles.
+      clearTimeout(archivageTimer);
+      await archiverMetreCourant();
       sourceArrayBuffer = nextArrayBuffer;
       sourceFileName = file.name;
       // La commune est conservee d'un import a l'autre : plusieurs lots d'un meme
       // marche sont generalement importes l'un apres l'autre.
-      state.metre = { ...emptyMetre(), commune: state.metre.commune, fileName: file.name, rows, skipped };
+      state.metre = { ...emptyMetre(), id: uid(), commune: state.metre.commune, fileName: file.name, rows, skipped };
+      await DGStore.saveSource(state.metre.id, sourceFileName, sourceArrayBuffer);
       populateFieldMap(headers);
       saveState();
       render();
@@ -2461,10 +2599,10 @@
       if (!state.catalogVersion) state.catalogVersion = CATALOG_VERSION;
       // Le classeur en memoire appartenait a l'ancien etat : sans ceci, « Compléter
       // le fichier reçu » ecrivait l'analyse importee dans le fichier precedent.
-      sourceWorkbook = null;
       sourceArrayBuffer = null;
       sourceFileName = "";
       creatingOuvrageForMetreRow = -1;
+      DGStore.clearSource();
       saveState();
       render();
       notify("Données importées.", "info");
@@ -2487,9 +2625,10 @@
     if (!window.confirm("Effacer TOUTES les données (ouvrages, matériaux, devis, métré) et repartir du catalogue ?")) return;
     if (!window.confirm("Cette action est définitive. Confirmer ?")) return;
     state = normalizeState(blankState());
-    sourceWorkbook = null;
     sourceArrayBuffer = null;
     sourceFileName = "";
+    metreArchives = [];
+    DGStore.clearSource();
     seedCatalog(true);
     saveState();
     render();
@@ -2499,18 +2638,7 @@
   /* --------------------------------------------------------------------- init */
 
   populateFieldMap(Object.keys(state.metre.rows[0] || {}));
-  if (state.metre.mapping?.poste) {
-    Object.entries({
-      "#map-poste": state.metre.mapping.poste,
-      "#map-description": state.metre.mapping.description,
-      "#map-unite": state.metre.mapping.unite,
-      "#map-quantite": state.metre.mapping.quantite,
-      "#map-prix": state.metre.mapping.prixUnitaire,
-    }).forEach(([selector, value]) => {
-      const select = $(selector);
-      if (select && value) select.value = value;
-    });
-  }
+  if (state.metre.mapping?.poste) appliquerMappingAuxSelects();
   updateEditForms();
   resetChantierForm();
   render();
@@ -2528,6 +2656,21 @@
   // L'attribut est deja pose par le script en tete de <head> (evite un flash) :
   // ceci ne fait que synchroniser l'etat visuel des boutons avec ce choix.
   applyTheme(document.documentElement.getAttribute("data-theme") || "auto");
+
+  /*
+   * Donnees lourdes : IndexedDB est asynchrone, donc restaurees apres le premier
+   * rendu. Le classeur n'est repris que s'il correspond bien au metre affiche — un
+   * import JSON a pu changer de marche entre-temps.
+   */
+  (async () => {
+    const [source, archives] = await Promise.all([DGStore.loadSource(), DGStore.listArchives()]);
+    metreArchives = archives;
+    if (source && source.metreId && source.metreId === state.metre.id && source.fileName === state.metre.fileName) {
+      sourceArrayBuffer = source.octets || null;
+      sourceFileName = source.fileName || "";
+    }
+    renderMetre();
+  })();
 
   // Rend l'app disponible hors connexion apres une premiere visite en ligne.
   // Chemin relatif : indispensable sous le sous-dossier de GitHub Pages.

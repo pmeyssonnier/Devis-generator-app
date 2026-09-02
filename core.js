@@ -844,7 +844,9 @@
     // analysedCommune : la commune effectivement utilisee par la derniere analyse.
     // C'est elle, et non le champ de saisie (modifiable a tout moment), qui decide
     // sous quel profil les confirmations sont memorisees.
-    return { fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
+    // id : identifie ce metre dans l'historique (IndexedDB), pour pouvoir le rouvrir
+    // avec ses lignes, son analyse et le fichier recu.
+    return { id: "", fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
   }
 
   function blankState(catalog) {
@@ -1117,6 +1119,20 @@
     if (row.pourMemoire) return "pour-memoire";
     if (!row.quantiteOk) return "quantite-manquante";
     return "ok";
+  }
+
+  /*
+   * Resume d'un metre pour la liste d'historique : de quoi reconnaitre un marche sans
+   * charger ses lignes. montantDe fournit le montant d'une ligne (il depend des
+   * reglages de prix, qui vivent dans l'etat, pas ici).
+   */
+  function resumeMetre(metre, montantDe) {
+    const analysed = (metre && metre.analysed) || [];
+    return {
+      postes: analysed.length,
+      chiffres: analysed.filter((row) => metreRowStatus(row, Boolean(row.ouvrageId)) === "ok").length,
+      total: analysed.reduce((somme, row) => somme + (Number(montantDe(row)) || 0), 0),
+    };
   }
 
   const METRE_STATUS_LABELS = {
@@ -1509,6 +1525,7 @@
     fusionnerOuvrages,
     metreRowStatus,
     METRE_STATUS_LABELS,
+    resumeMetre,
     analyseRows,
     isForfaitUnit,
     parseDelimited,

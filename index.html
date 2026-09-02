@@ -38,6 +38,7 @@
     -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" async></script>
     <script src="catalog.js" defer></script>
+    <script src="db.js" defer></script>
     <script src="core.js" defer></script>
     <script src="app.js" defer></script>
   </head>
@@ -629,12 +630,20 @@
               </div>
               <p class="metre-status" id="metre-status">Aucun métré chargé.</p>
 
-              <label>Commune / pouvoir adjudicateur
-                <input id="metre-commune" type="text" list="metre-communes-connues" placeholder="ex. Schaerbeek" />
+              <label>Commune / pouvoir adjudicateur<span class="required-mark" aria-hidden="true">*</span>
+                <input id="metre-commune" type="text" list="metre-communes-connues" placeholder="ex. Schaerbeek" aria-required="true" />
                 <small id="metre-commune-alerte" class="field-alert" hidden></small>
-                <small>Les codes de métré appris restent propres à cette commune.</small>
+                <small>Obligatoire : les codes de métré appris restent propres à cette commune, et un code
+                  du catalogue de départ ne peut plus être appliqué comme certitude à un autre marché.</small>
               </label>
               <datalist id="metre-communes-connues"></datalist>
+
+              <div class="metre-archives" id="metre-archives-bloc" hidden>
+                <h3 class="setup-subtitle">Métrés déjà chiffrés</h3>
+                <p class="setup-hint">Rouvrir un métré restitue ses lignes, son analyse et le fichier reçu :
+                  de quoi le compléter à nouveau sans tout refaire.</p>
+                <ul class="archive-list" id="metre-archives"></ul>
+              </div>
 
               <h3 class="setup-subtitle">Colonnes détectées</h3>
               <div class="field-map">
