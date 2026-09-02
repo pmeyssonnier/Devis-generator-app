@@ -1730,3 +1730,75 @@ tr.flag-detail-row.danger td {
   border-color: var(--accent);
   background: var(--soft);
 }
+
+/* ------------------------------------------------------ devis multiples (S4) */
+
+.devis-colonne {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+.devis-identite {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.devis-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.devis-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.devis-list li.courant {
+  border-color: var(--accent);
+  background: var(--soft);
+}
+
+.devis-list .devis-resume {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.devis-list strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.devis-list small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.devis-list .devis-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.devis-list button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .devis-list button {
+    min-height: 44px;
+  }
+}

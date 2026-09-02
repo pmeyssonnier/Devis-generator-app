@@ -961,6 +961,7 @@ function normaliser(source, avertissements = []) {
   return C.normalizeState(source, {
     catalog: CATALOG,
     uid: uidSequentiel(),
+    today: "2026-09-02",
     onWarning: (message) => avertissements.push(message),
   });
 }
@@ -984,9 +985,15 @@ test("normalizeState migre une bibliotheque enregistree par une version anterieu
   assert.equal(etat.ouvrages[0].nom, "Enduit de façade", "le code en tete du libelle, suivi d'un separateur, est retire");
   assert.ok(etat.ouvrages[1].id, "un ouvrage sans id en recoit un");
   assert.notEqual(etat.ouvrages[1].poste, etat.ouvrages[0].poste, "deux ouvrages ne partagent pas le meme code interne");
-  assert.equal(etat.devis.tva, 0, "0 % est une valeur legitime, pas une absence");
-  assert.equal(etat.devis.lignes[0].quantite, 12);
-  assert.ok(etat.devis.lignes[0].id, "une ligne de devis sans id en recoit un");
+  const devis = etat.devisList[0];
+  assert.equal(etat.devisList.length, 1, "le devis unique d'avant devient le premier de la liste");
+  assert.equal(devis.tva, 0, "0 % est une valeur legitime, pas une absence");
+  assert.equal(devis.quantite, undefined);
+  assert.equal(devis.lignes[0].quantite, 12);
+  assert.ok(devis.lignes[0].id, "une ligne de devis sans id en recoit un");
+  assert.equal(devis.numero, "2026-001", "un numero est attribue au devis migre");
+  assert.equal(etat.devisCourantId, devis.id);
+  assert.equal(etat.devis, undefined, "l'ancien champ singulier disparait");
   assert.equal(etat.settings.tva, 21, "une TVA hors 6/21 revient au taux par defaut");
   assert.equal(etat.settings.coutHoraire, 52, "les reglages saisis sont conserves");
   assert.equal(etat.materiaux[0].prix, 0, "un prix non numerique ne devient jamais NaN");
@@ -1233,7 +1240,7 @@ test("fusionner deux ouvrages transfere tout ce qui designait le disparu", () =>
   assert.equal(etat.ouvrages.length, 1, "l'ouvrage source disparait");
   assert.ok(peinture.refsMetre.includes("03.02"), "les codes du disparu sont repris");
   assert.equal(etat.mappingCommunes.Ixelles["2.05"], "peinture");
-  assert.equal(etat.devis.lignes[0].ouvrageId, "peinture");
+  assert.equal(etat.devisList[0].lignes[0].ouvrageId, "peinture");
   assert.equal(etat.chantiers[0].mainOeuvre[0].ouvrageId, "peinture", "sans ce transfert, l'historique ne recale plus rien");
   assert.equal(etat.metre.analysed[0].ouvrageId, "peinture");
   assert.equal(etat.metre.analysed[1].suggestionId, "peinture");
@@ -1262,7 +1269,7 @@ test("supprimer un ouvrage ne laisse aucune reference pendante", () => {
   assert.deepEqual(referencesOrphelines(etat), []);
   // Devis et chantiers gardent volontairement la reference : ils s'affichent
   // « ouvrage supprimé » plutot que de disparaitre d'un historique.
-  assert.equal(etat.devis.lignes[0].ouvrageId, "enduit");
+  assert.equal(etat.devisList[0].lignes[0].ouvrageId, "enduit");
   assert.equal(etat.chantiers[0].mainOeuvre[0].ouvrageId, "enduit");
 });
 
@@ -1310,4 +1317,77 @@ test("un metre neuf porte un identifiant vide, pret a etre attribue a l'import",
     { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} },
   );
   assert.equal(relu.metre.id, "m-1", "l'identifiant survit a une relecture de l'etat");
+});
+
+/* --------------------------------------------------------------- devis multiples */
+
+test("numeroDevisSuivant incremente par annee, sans toucher aux autres formes", () => {
+  const liste = [{ numero: "2026-001" }, { numero: "2026-007" }, { numero: "2025-030" }, { numero: "DEV-42" }];
+  assert.equal(C.numeroDevisSuivant(liste, "2026"), "2026-008");
+  assert.equal(C.numeroDevisSuivant(liste, "2025"), "2025-031");
+  assert.equal(C.numeroDevisSuivant(liste, "2027"), "2027-001", "une annee neuve repart a 1");
+  assert.equal(C.numeroDevisSuivant([], "2026"), "2026-001");
+  assert.equal(C.numeroDevisSuivant(undefined, "2026"), "2026-001");
+});
+
+test("plusieurs devis coexistent, chacun avec son numero et ses lignes", () => {
+  const etat = normaliser({
+    devisList: [
+      { id: "d1", numero: "2026-001", date: "2026-01-15", client: "Dupont", lignes: [{ ouvrageId: "a", quantite: 3 }] },
+      { id: "d2", numero: "2026-002", date: "2026-02-20", client: "Martin", lignes: [] },
+    ],
+    devisCourantId: "d2",
+  });
+  assert.equal(etat.devisList.length, 2);
+  assert.equal(etat.devisCourantId, "d2", "le devis ouvert est conserve");
+  assert.equal(etat.devisList[0].lignes[0].quantite, 3);
+  assert.equal(etat.devisList[1].lignes.length, 0);
+});
+
+test("un devis courant qui ne designe rien retombe sur le premier", () => {
+  const etat = normaliser({
+    devisList: [{ id: "d1", numero: "2026-001", lignes: [] }],
+    devisCourantId: "supprime-depuis",
+  });
+  assert.equal(etat.devisCourantId, "d1");
+});
+
+test("une date de devis absente ou invalide reprend celle du jour", () => {
+  const etat = normaliser({ devisList: [{ numero: "2026-004" }, { numero: "2026-005", date: "pas une date" }] });
+  assert.equal(etat.devisList[0].date, "2026-09-02");
+  assert.equal(etat.devisList[1].date, "2026-09-02");
+});
+
+test("supprimer un ouvrage laisse la ligne de chaque devis, marquee comme orpheline", () => {
+  const etat = normaliser({
+    ouvrages: [{ id: "a", nom: "Enduit", unite: "m2" }],
+    devisList: [
+      { id: "d1", numero: "2026-001", lignes: [{ ouvrageId: "a", quantite: 1 }] },
+      { id: "d2", numero: "2026-002", lignes: [{ ouvrageId: "a", quantite: 2 }] },
+    ],
+  });
+  C.supprimerOuvrage(etat, "a");
+  // Volontaire : un devis deja remis au client ne doit pas perdre ses lignes, il les
+  // affiche « ouvrage supprimé ».
+  assert.equal(etat.devisList[0].lignes[0].ouvrageId, "a");
+  assert.equal(etat.devisList[1].lignes[0].ouvrageId, "a");
+});
+
+test("fusionner deux ouvrages remappe les lignes de TOUS les devis", () => {
+  const etat = normaliser({
+    ouvrages: [
+      { id: "a", nom: "Enduit", unite: "m2" },
+      { id: "b", nom: "Peinture", unite: "m2" },
+    ],
+    devisList: [
+      { id: "d1", numero: "2026-001", lignes: [{ ouvrageId: "a", quantite: 1 }] },
+      { id: "d2", numero: "2026-002", lignes: [{ ouvrageId: "a", quantite: 2 }, { ouvrageId: "b", quantite: 5 }] },
+    ],
+  });
+  C.fusionnerOuvrages(etat, "a", "b");
+  assert.deepEqual(
+    etat.devisList.flatMap((devis) => devis.lignes.map((ligne) => ligne.ouvrageId)),
+    ["b", "b", "b"],
+    "aucune ligne ne reste sur l'ouvrage fusionne, dans aucun devis",
+  );
 });

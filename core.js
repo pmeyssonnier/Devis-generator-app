@@ -857,7 +857,10 @@
       entrepreneur: { ...catalog.defaultEntrepreneur },
       materiaux: [],
       ouvrages: [],
-      devis: { ...catalog.defaultDevis, lignes: [] },
+      // Plusieurs devis : chacun avec son numero et sa date, aucun n'ecrase le
+      // precedent. devisCourantId designe celui qu'on edite.
+      devisList: [],
+      devisCourantId: "",
       chantiers: [],
       metre: emptyMetre(),
       // Codes de metre appris, par commune : { commune: { code: ouvrageId } }. Un code
@@ -947,8 +950,18 @@
       );
     }
 
-    const devis = source.devis || {};
-    next.devis = {
+    /*
+     * Devis : une liste, alors qu'il n'y en avait qu'un seul jusqu'ici. Un etat
+     * enregistre avant ce changement porte « devis » au singulier — il devient le
+     * premier de la liste, avec un numero et une date attribues s'il n'en avait pas.
+     */
+    const aujourdhui = /^\d{4}-\d{2}-\d{2}$/.test(String(deps.today || "")) ? deps.today : "";
+    const sourceDevis =
+      Array.isArray(source.devisList) && source.devisList.length ? source.devisList : [source.devis || {}];
+    next.devisList = sourceDevis.map((devis) => ({
+      id: devis.id || uid(),
+      numero: String(devis.numero || "").trim(),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(devis.date || "")) ? devis.date : aujourdhui,
       client: devis.client || "",
       adresse: devis.adresse || "",
       objet: devis.objet || "",
@@ -963,7 +976,16 @@
         ouvrageId: ligne.ouvrageId || "",
         quantite: Number(ligne.quantite) || 0,
       })),
-    };
+    }));
+    // Numeros manquants (migration) : attribues dans l'ordre, par annee.
+    next.devisList.forEach((devis) => {
+      if (devis.numero) return;
+      devis.numero = numeroDevisSuivant(next.devisList, (devis.date || aujourdhui || "").slice(0, 4) || "0000");
+    });
+    // devisCourantId doit toujours designer un devis existant.
+    const devisIds = new Set(next.devisList.map((devis) => devis.id));
+    next.devisCourantId = devisIds.has(source.devisCourantId) ? source.devisCourantId : next.devisList[0].id;
+    delete next.devis;
 
     // Releves de chantier : ce qui a reellement ete preste et achete.
     next.chantiers = (source.chantiers || []).map((chantier) => ({
@@ -1003,6 +1025,20 @@
    * "SCHAERBEEK" ne doivent pas devenir trois profils distincts. On reutilise la clef
    * deja enregistree qui correspond une fois normalisee, sinon la casse telle que tapee.
    */
+  /*
+   * Numero de devis suivant pour une annee donnee : « 2026-001 », « 2026-002 »…
+   * Les numeros d'une autre annee, ou d'une autre forme (numerotation propre a
+   * l'entreprise), sont ignores plutot que reecrits.
+   */
+  function numeroDevisSuivant(devisList, annee) {
+    const prefixe = String(annee || "").slice(0, 4) || "0000";
+    const dernier = (devisList || []).reduce((plus, devis) => {
+      const trouve = /^(\d{4})-(\d{1,4})$/.exec(String(devis.numero || "").trim());
+      return trouve && trouve[1] === prefixe ? Math.max(plus, Number(trouve[2])) : plus;
+    }, 0);
+    return `${prefixe}-${String(dernier + 1).padStart(3, "0")}`;
+  }
+
   function resolveCommuneKey(mappingCommunes, commune) {
     const saisie = String(commune || "").trim();
     if (!saisie) return "";
@@ -1078,8 +1114,10 @@
         if (codes[code] === fromId) codes[code] = toId;
       });
     });
-    state.devis.lignes.forEach((ligne) => {
-      if (ligne.ouvrageId === fromId) ligne.ouvrageId = toId;
+    state.devisList.forEach((devis) => {
+      devis.lignes.forEach((ligne) => {
+        if (ligne.ouvrageId === fromId) ligne.ouvrageId = toId;
+      });
     });
     state.metre.analysed.forEach((row) => {
       if (row.ouvrageId === fromId) row.ouvrageId = toId;
@@ -1520,6 +1558,7 @@
     blankState,
     normalizeState,
     resolveCommuneKey,
+    numeroDevisSuivant,
     memoriserCode,
     supprimerOuvrage,
     fusionnerOuvrages,
