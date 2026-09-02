@@ -50,6 +50,8 @@
   let editingChantierId = "";
   let selectedChantierId = "";
   let storageWarningShown = false;
+  // Clef sous laquelle un etat illisible a ete mis de cote au chargement ("" sinon).
+  let corruptedStateKey = "";
 
   const $ = (selector) => document.querySelector(selector);
   const esc = C.escapeHtml;
@@ -95,14 +97,25 @@
   }
 
   function loadState() {
+    let raw = "";
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      raw = localStorage.getItem(STORAGE_KEY) || "";
       if (raw) return JSON.parse(raw);
       // Reprise des donnees de la version precedente si elles existent.
       const legacy = localStorage.getItem("generateur-devis-v1");
       if (legacy) return JSON.parse(legacy);
     } catch {
-      /* donnees illisibles : on repart du catalogue */
+      // Donnees illisibles : on repart du catalogue, mais sans ecraser le brut — il
+      // est peut-etre recuperable a la main, et le saveState() de l'initialisation
+      // l'aurait definitivement perdu.
+      try {
+        if (raw) {
+          corruptedStateKey = `${STORAGE_KEY}-corrompu`;
+          localStorage.setItem(corruptedStateKey, raw);
+        }
+      } catch {
+        corruptedStateKey = "";
+      }
     }
     return blankState();
   }
@@ -216,7 +229,9 @@
       client: devis.client || "",
       adresse: devis.adresse || "",
       objet: devis.objet || "",
-      tva: Number(devis.tva ?? next.settings.tva) || 21,
+      // 0 % est une valeur legitime (regime cocontractant, courant en marche public) :
+      // « || 21 » la remettait a 21 a chaque rechargement.
+      tva: Number.isFinite(Number(devis.tva)) && devis.tva !== null && devis.tva !== "" ? Number(devis.tva) : Number(next.settings.tva) || 21,
       lignes: (devis.lignes || []).map((ligne) => ({
         id: ligne.id || uid(),
         ouvrageId: ligne.ouvrageId || "",
@@ -283,9 +298,19 @@
           C.normalizeText(ouvrage.nom) === key ||
           (ouvrage.refsMetre || []).some((ref) => C.normalizeRef(ref) === C.normalizeRef(source.ref)),
       );
+      // Ne (re)donner que les codes qu'aucun autre ouvrage ne porte deja : un code
+      // retire d'ici par apprentissage (learnMatch) a ete rattache ailleurs, le
+      // remettre annulerait ce choix en silence — et le premier trouve gagnerait.
+      // Vaut aussi pour un ouvrage du catalogue recree apres suppression.
+      const pris = new Set(
+        state.ouvrages.flatMap((autre) =>
+          existing && autre.id === existing.id ? [] : (autre.refsMetre || []).map((ref) => C.normalizeRef(ref)),
+        ),
+      );
+      const libres = refs.filter((ref) => !pris.has(C.normalizeRef(ref)));
       if (existing) {
-        existing.refsMetre = C.normalizeRefList([existing.refsMetre, refs]);
-        existing.motsCles = C.normalizeKeywords([existing.motsCles, source.motsCles, refs.join(", ")]);
+        existing.refsMetre = C.normalizeRefList([existing.refsMetre, libres]);
+        existing.motsCles = C.normalizeKeywords([existing.motsCles, source.motsCles, libres.join(", ")]);
         return;
       }
       const code = C.nextInternalCode(usedCodes, source.nom);
@@ -293,7 +318,7 @@
       state.ouvrages.push({
         id: uid(),
         poste: code,
-        refsMetre: refs,
+        refsMetre: libres,
         nom: source.nom,
         unite: source.unite,
         heures: source.heures,
@@ -304,7 +329,7 @@
           }))
           .filter((composant) => composant.materiauId),
         materiel: source.materiel,
-        motsCles: C.normalizeKeywords([source.motsCles, source.nom, refs.join(", ")]),
+        motsCles: C.normalizeKeywords([source.motsCles, source.nom, libres.join(", ")]),
       });
       added += 1;
     });
@@ -322,7 +347,14 @@
   const chantiersTries = () => [...state.chantiers].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   // A defaut de selection, le chantier le plus recent : c'est celui qu'on releve.
   const chantierCourant = () => chantierById(selectedChantierId) || chantiersTries()[0] || null;
-  const priceOf = (ouvrage) => C.calculateOuvrage(ouvrage, state.settings, materialById);
+  // La vente est arrondie au centime ici, une seule fois : c'est le PU ecrit dans le
+  // classeur rendu a la commune, que ses formules multiplient ensuite. Tous les
+  // montants de l'app en derivent, sinon recapitulatif et fichier divergeaient
+  // (jusqu'a 1 € par poste sur 27 ouvrages du catalogue a 237 unites).
+  const priceOf = (ouvrage) => {
+    const calc = C.calculateOuvrage(ouvrage, state.settings, materialById);
+    return { ...calc, vente: C.roundMoney(calc.vente) };
+  };
 
   /* ---------------------------------------------------------------- notifications */
 
@@ -1123,7 +1155,9 @@
       ? `<strong>${esc(state.metre.fileName)}</strong> — ${state.metre.rows.length} poste(s) lu(s)${
           state.metre.skipped ? `, ${state.metre.skipped} ligne(s) ignorée(s)` : ""
         }${analysed.length ? ` · ${chiffres}/${analysed.length} chiffré(s) · total ${euro.format(total)}` : ""}${
-          sourceWorkbook ? "" : `<br /><em>Classeur d’origine non disponible : réimportez le fichier pour le compléter.</em>`
+          sourceWorkbook && sourceFileName === state.metre.fileName
+            ? ""
+            : `<br /><em>Classeur d’origine non disponible : réimportez le fichier pour le compléter.</em>`
         }`
       : "Aucun métré chargé.";
 
@@ -1279,15 +1313,31 @@
     state.metre.analysedCommune = commune;
 
     state.metre.analysed = state.metre.rows.map((raw, index) => {
-      const numero = String(raw[mapping.poste] ?? "").trim() || String(index + 1);
-      const description = String(raw[mapping.description] ?? "").trim();
-      const unite = String(raw[mapping.unite] ?? "").trim();
-      const quantite = C.parseNumber(raw[mapping.quantite]);
+      // rowField : chaque feuille garde ses propres en-tetes ; le mapping global ne
+      // vaut que pour l'une d'elles, les autres sont resolues ligne par ligne.
+      const champ = (cle) => C.rowField(raw, mapping[cle], C.HEADER_CANDIDATES[cle]);
+      const numeroLu = String(champ("poste") ?? "").trim();
+      // Sans numero dans le fichier, on en fabrique un pour l'affichage seulement : il
+      // ne doit jamais etre appris ni recherche comme code (cf. findMatch/learnMatch).
+      const numeroSynthetique = !numeroLu;
+      const numero = numeroLu || String(index + 1);
+      const description = String(champ("description") ?? "").trim();
+      const unite = String(champ("unite") ?? "").trim();
+      const quantite = C.parseNumber(champ("quantite"));
       const quantiteOk = Number.isFinite(quantite) && quantite > 0;
       // Un poste "pour memoire"/"hors marche" n'a normalement ni quantite ni prix a
       // chiffrer : ce n'est pas une anomalie a signaler comme les autres.
       const pourMemoire = C.isPourMemoire(description);
-      const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk, pourMemoire };
+      const base = {
+        numero,
+        poste: numero,
+        numeroSynthetique,
+        description,
+        unite,
+        quantite: quantiteOk ? quantite : 0,
+        quantiteOk,
+        pourMemoire,
+      };
       const match = C.findMatch(base, state.ouvrages, cache, communeCodes);
 
       const label = `Poste ${numero}`;
@@ -1308,7 +1358,7 @@
           message: `${label} : unité « ${unite} » incompatible avec l’ouvrage retenu.`,
         });
       }
-      const codeKey = C.normalizeRef(numero);
+      const codeKey = numeroSynthetique ? "" : C.normalizeRef(numero);
       if (codeKey) {
         if (seenCodes.has(codeKey)) alerts.push({ type: "warning", message: `${label} : code présent plusieurs fois.` });
         seenCodes.set(codeKey, true);
@@ -1359,7 +1409,8 @@
     const ouvrage = ouvrageById(row.ouvrageId);
     // Filet de securite : ne jamais memoriser un rapprochement dont l'unite ne
     // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
-    if (!ouvrage || !row.numero || row.unitWarning) return;
+    // Un numero synthetique (ligne sans N°) n'est pas un code : rien a memoriser.
+    if (!ouvrage || !row.numero || row.unitWarning || row.numeroSynthetique) return;
     const key = C.normalizeRef(row.numero);
     if (!key) return;
     // Commune de l'analyse, pas celle du champ : si l'utilisateur a change le champ
@@ -1442,7 +1493,7 @@
     if (!row) return { status: "aucun", row: null };
     const ouvrage = ouvrageById(ouvrageId);
     if (!ouvrage) return { status: "aucun", row };
-    if (!C.unitsCompatible(ouvrage.unite, row.unite)) return { status: "unite", row, ouvrage };
+    if (!C.unitsCompatible(ouvrage.unite, row.unite, row.quantite)) return { status: "unite", row, ouvrage };
     row.ouvrageId = ouvrage.id;
     row.manual = true;
     row.confidence = 1;
@@ -1478,6 +1529,16 @@
     downloadBlob(filename, new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" }));
   }
 
+  // Plage d'une feuille ramenee a l'origine A1 (voir l'import du metre).
+  function rangeFromA1(sheet) {
+    const ref = sheet && sheet["!ref"];
+    if (!ref) return undefined;
+    const range = XLSX.utils.decode_range(ref);
+    range.s.r = 0;
+    range.s.c = 0;
+    return XLSX.utils.encode_range(range);
+  }
+
   function requireXlsx() {
     if (globalThis.XLSX) return true;
     notify("La bibliothèque XLSX n’est pas chargée (connexion internet requise au premier lancement).", "danger");
@@ -1485,8 +1546,10 @@
   }
 
   /*
-   * Ecrit les prix unitaires dans le classeur recu et le renvoie tel quel :
-   * feuilles, formules, sous-totaux et recapitulatif sont conserves.
+   * Ecrit les prix unitaires dans le classeur recu et le renvoie : feuilles,
+   * formules, fusions de cellules, largeurs de colonnes, sous-totaux et
+   * recapitulatif sont conserves. Pas la mise en forme (polices, fonds, bordures) :
+   * l'edition communautaire de SheetJS ne la reecrit pas — c'est dit a l'utilisateur.
    *
    * Reparti a chaque export depuis les octets d'origine (sourceArrayBuffer),
    * jamais depuis un classeur deja modifie : sinon un prix ecrit lors d'un export
@@ -1495,8 +1558,11 @@
    */
   function exportMetreSource() {
     if (!requireXlsx()) return;
-    if (!sourceArrayBuffer) {
-      notify("Réimportez le fichier du métré pour pouvoir le compléter.", "danger");
+    // Le classeur en memoire doit etre CELUI du metre affiche : apres un import JSON
+    // (autre marche, meme session), les coordonnees de l'analyse n'ont aucun sens
+    // dans l'ancien fichier — les prix y seraient ecrits n'importe ou.
+    if (!sourceArrayBuffer || sourceFileName !== state.metre.fileName) {
+      notify(`Réimportez le fichier « ${state.metre.fileName || "du métré"} » pour pouvoir le compléter.`, "danger");
       return;
     }
     const mapping = state.metre.mapping || {};
@@ -1539,7 +1605,8 @@
     const base = sourceFileName.replace(/\.(xlsx|xlsm|xls)$/i, "") || "metre";
     XLSX.writeFile(workbook, `${base}-chiffre.xlsx`);
     notify(
-      `${written} prix reporté(s) dans le fichier d’origine${skipped ? `, ${skipped} poste(s) laissé(s) vide(s)` : ""}.`,
+      `${written} prix reporté(s) dans le fichier d’origine${skipped ? `, ${skipped} poste(s) laissé(s) vide(s)` : ""}. ` +
+        "Formules et fusions conservées ; polices, fonds et bordures du fichier d’origine ne le sont pas.",
       "info",
     );
   }
@@ -2048,10 +2115,13 @@
       if (!row) return;
       if (data.metreFlagKind === "unite") {
         const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
+        const forfait = suggestion && (C.isForfaitUnit(suggestion.unite) || C.isForfaitUnit(row.unite));
         notify(
-          suggestion
-            ? `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche (« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou créez-en un nouveau dans la bibliothèque.`
-            : `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`,
+          forfait
+            ? `Forfait contre quantité : le poste « ${row.numero} » est en « ${row.unite || "?"} » × ${number.format(row.quantite)}, l’ouvrage le plus proche (« ${suggestion.nom} ») est un forfait (${suggestion.unite}). Un prix global ne se multiplie pas par une quantité : créez un ouvrage à l’unité du poste, ou, si c’est bien un forfait, ramenez la quantité à 1 dans le fichier.`
+            : suggestion
+              ? `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche (« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou créez-en un nouveau dans la bibliothèque.`
+              : `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`,
           "danger",
         );
       } else if (data.metreFlagKind === "quantite") {
@@ -2293,10 +2363,13 @@
     // Meme regle qu'au rapprochement automatique : une unite incompatible n'est
     // jamais assignable, choix manuel compris — sinon rien n'empeche de mémoriser
     // et d'exporter un prix pour la mauvaise unite par une simple erreur de saisie.
-    if (chosen && !C.unitsCompatible(chosen.unite, row.unite)) {
+    if (chosen && !C.unitsCompatible(chosen.unite, row.unite, row.quantite)) {
       event.target.value = row.ouvrageId || "";
+      const forfait = C.isForfaitUnit(chosen.unite) || C.isForfaitUnit(row.unite);
       notify(
-        `Unité incompatible : « ${row.unite || "?"} » ne peut pas être chiffré avec « ${chosen.nom} » (${chosen.unite}).`,
+        forfait
+          ? `Forfait contre quantité : « ${chosen.nom} » (${chosen.unite}) est un prix global, il ne peut pas être multiplié par ${number.format(row.quantite)} ${row.unite || "?"}.`
+          : `Unité incompatible : « ${row.unite || "?"} » ne peut pas être chiffré avec « ${chosen.nom} » (${chosen.unite}).`,
         "danger",
       );
       return;
@@ -2352,7 +2425,12 @@
         nextWorkbook = XLSX.read(nextArrayBuffer, { cellFormula: true, cellStyles: true });
         nextWorkbook.SheetNames.forEach((sheetName) => {
           if (C.normalizeText(sheetName).includes("recap")) return;
-          const grid = XLSX.utils.sheet_to_json(nextWorkbook.Sheets[sheetName], { header: 1, defval: "", blankrows: true });
+          const sheet = nextWorkbook.Sheets[sheetName];
+          // Plage explicite depuis A1 : sans elle, sheet_to_json indexe depuis la
+          // premiere cellule occupee (B3 si lignes 1-2 et colonne A sont vides) alors
+          // que l'export prend __row/__cols pour des coordonnees absolues — les prix
+          // partaient deux lignes et une colonne trop haut, sans aucun message.
+          const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: true, range: rangeFromA1(sheet) });
           const parsed = C.rowsFromGrid(grid, sheetName);
           rows = rows.concat(parsed.rows);
           skipped += parsed.skipped;
@@ -2472,6 +2550,12 @@
       if (!window.confirm("Remplacer la bibliothèque actuelle par le contenu de ce fichier ?")) return;
       state = normalizeState(imported);
       if (!state.catalogVersion) state.catalogVersion = CATALOG_VERSION;
+      // Le classeur en memoire appartenait a l'ancien etat : sans ceci, « Compléter
+      // le fichier reçu » ecrivait l'analyse importee dans le fichier precedent.
+      sourceWorkbook = null;
+      sourceArrayBuffer = null;
+      sourceFileName = "";
+      creatingOuvrageForMetreRow = -1;
       saveState();
       render();
       notify("Données importées.", "info");
@@ -2523,6 +2607,13 @@
   render();
   setComposantRows([]);
   saveState();
+  if (corruptedStateKey) {
+    notify(
+      "Les données enregistrées étaient illisibles : l’application repart du catalogue. " +
+        `Une copie brute est conservée dans le navigateur sous la clé « ${corruptedStateKey} ».`,
+      "danger",
+    );
+  }
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
   // L'attribut est deja pose par le script en tete de <head> (evite un flash) :

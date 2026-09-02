@@ -79,7 +79,11 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
      similarité de libellé.
 
    Dans les deux cas, un ouvrage dont l'unité est incompatible n'est jamais retenu,
-   seulement signalé. La commune prise en compte est celle **au moment de l'analyse** :
+   seulement signalé. Un ouvrage **forfaitaire** n'est retenu que pour une quantité
+   de 1 : un prix global ne se multiplie pas par 180 m². Les classeurs dont chaque
+   feuille a ses propres en-têtes (« Description » ici, « Désignation » là) sont lus
+   colonne par colonne pour chaque ligne. Un poste sans numéro reçoit un numéro
+   d'affichage qui n'est jamais mémorisé comme code. La commune prise en compte est celle **au moment de l'analyse** :
    la modifier ensuite affiche un rappel de relancer l'analyse, et les confirmations
    faites entre-temps restent mémorisées pour la commune de l'analyse (les lignes ont
    été rapprochées avec sa table de codes, elles ne doivent pas atterrir ailleurs).
@@ -92,8 +96,12 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    techniquement proche existe déjà (libellé, matériaux, rendement, matériel), l'app le
    signale et propose de le réutiliser plutôt que de créer un quasi-doublon.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
-   d'origine. Feuilles, formules, sous-totaux et récapitulatif sont conservés — le
-   pouvoir adjudicateur récupère son propre document, complété. Chaque complétion
+   d'origine. Feuilles, formules, fusions de cellules, largeurs de colonnes, sous-totaux
+   et récapitulatif sont conservés — le pouvoir adjudicateur récupère son propre
+   document, complété. La mise en forme (polices, fonds, bordures) ne l'est pas : la
+   bibliothèque Excel utilisée ne la réécrit pas. Le prix unitaire écrit est arrondi
+   au centime, et c'est ce prix arrondi que l'application multiplie partout, pour
+   que récapitulatif et fichier rendu donnent le même total. Chaque complétion
    repart des données reçues : un rapprochement retiré après une première complétion
    ne laisse jamais de prix résiduel dans une complétion suivante.
 

@@ -119,13 +119,27 @@
     return UNIT_ALIASES[cleaned] || cleaned;
   }
 
-  // Un forfait accepte n'importe quelle unite : le prix est global.
-  function unitsCompatible(a, b) {
+  function isForfaitUnit(unit) {
+    return normalizeUnit(unit) === "ff";
+  }
+
+  /*
+   * Un forfait accepte n'importe quelle unite : le prix est global. Mais un prix
+   * global ne se multiplie pas : face a une quantite autre que 1, le forfait n'est
+   * plus compatible — sinon « Installation de chantier » (FF, 1 675 €) rapproche
+   * d'un poste m2 x 180 donnait 301 500 €, a 100 % de confiance. Sans quantite
+   * connue (absente, nulle : la ligne n'est de toute facon pas chiffrable), le
+   * joker reste accepte comme avant.
+   */
+  function unitsCompatible(a, b, quantite) {
     const left = normalizeUnit(a);
     const right = normalizeUnit(b);
     if (!left || !right) return true;
     if (left === right) return true;
-    return left === "ff" || right === "ff";
+    if (left !== "ff" && right !== "ff") return false;
+    if (quantite === undefined || quantite === null || quantite === "") return true;
+    const q = Number(quantite);
+    return !Number.isFinite(q) || q === 0 || q === 1;
   }
 
   /* ------------------------------------------------------------------ nombres */
@@ -673,9 +687,14 @@
    * mapping par commune est cense eliminer.
    */
   function findMatch(row, ouvrages, cache, communeCodes) {
-    const codes = [row.poste, row.numero]
-      .map(normalizeRef)
-      .filter(Boolean);
+    // Un numero fabrique faute de colonne N° (« 1 », « 2 »…) n'est pas un code : le
+    // chercher dans les codes appris rapprocherait la premiere ligne de n'importe quel
+    // metre sans numero de l'ouvrage confirme sur la premiere ligne d'un autre.
+    const codes = row.numeroSynthetique
+      ? []
+      : [row.poste, row.numero]
+          .map(normalizeRef)
+          .filter(Boolean);
     const communeActive = communeCodes !== null && communeCodes !== undefined;
 
     if (codes.length && communeActive) {
@@ -683,7 +702,7 @@
       const mapped = mappedId ? ouvrages.find((ouvrage) => ouvrage.id === mappedId) : null;
       if (mapped) {
         // Meme garde-fou que pour un code connu du catalogue : l'unite reste eliminatoire.
-        if (!unitsCompatible(mapped.unite, row.unite)) {
+        if (!unitsCompatible(mapped.unite, row.unite, row.quantite)) {
           return { ouvrageId: "", confidence: 1, reason: "", unitWarning: true, suggestionId: mapped.id };
         }
         return { ouvrageId: mapped.id, confidence: 1, reason: "code connu (commune)", unitWarning: false, suggestionId: "" };
@@ -699,7 +718,7 @@
         // correspond plus n'est jamais applique tel quel, seulement suggere. Sans ce
         // garde-fou, un poste au m pouvait etre chiffre — et exporte — avec un ouvrage
         // au m2 simplement parce que le code de metre avait ete appris ailleurs.
-        if (!unitsCompatible(byCode.unite, row.unite)) {
+        if (!unitsCompatible(byCode.unite, row.unite, row.quantite)) {
           return { ouvrageId: "", confidence: 1, reason: "", unitWarning: true, suggestionId: byCode.id };
         }
         return { ouvrageId: byCode.id, confidence: 1, reason: "code connu", unitWarning: false, suggestionId: "" };
@@ -711,7 +730,7 @@
     ouvrages.forEach((ouvrage) => {
       const score = matchScore(row.description, ouvrage, cache);
       if (score <= 0) return;
-      if (unitsCompatible(ouvrage.unite, row.unite)) {
+      if (unitsCompatible(ouvrage.unite, row.unite, row.quantite)) {
         if (!best || score > best.score) best = { ouvrage, score };
       } else if (!bestIncompatible || score > bestIncompatible.score) {
         bestIncompatible = { ouvrage, score };
@@ -950,7 +969,13 @@
         }
         return;
       }
-      if (isTotalRow(description)) return;
+      // Un vrai sous-total n'a ni unite ni quantite. « Démontage total de la
+      // chaudière » (pce, 1) ou « Report des eaux de toiture » (m, 12) sont des
+      // postes, pas des totaux : on ne les elimine plus, et ce qu'on elimine est compte.
+      if (isTotalRow(description) && !unite && !Number.isFinite(parseNumber(quantite))) {
+        skipped += 1;
+        return;
+      }
       if (!description) {
         skipped += 1;
         return;
@@ -980,6 +1005,21 @@
     });
 
     return { rows, headers, skipped, headerIndex };
+  }
+
+  /*
+   * Valeur d'une colonne pour une ligne, en tolerant que cette ligne vienne d'une
+   * feuille dont les en-tetes different de celle retenue dans le mapping global
+   * (Lot 1 en « Description », Lot 2 en « Désignation ») : si l'en-tete mappe n'existe
+   * pas dans cette ligne, on cherche l'equivalent parmi ses propres colonnes. Sans
+   * cela, la moitie des colonnes d'un classeur multi-feuilles se vidait.
+   */
+  function rowField(raw, header, candidates) {
+    // Pas d'en-tete choisi (« — ») : choix explicite de l'utilisateur, on le respecte.
+    if (!header) return undefined;
+    if (Object.prototype.hasOwnProperty.call(raw, header)) return raw[header];
+    const fallback = findHeader(Object.keys(raw.__cols || {}), candidates);
+    return fallback ? raw[fallback] : undefined;
   }
 
   /*
@@ -1088,6 +1128,8 @@
     findHeaderRowIndex,
     looksLikeCode,
     rowsFromGrid,
+    rowField,
+    isForfaitUnit,
     parseDelimited,
   };
 })(globalThis);
