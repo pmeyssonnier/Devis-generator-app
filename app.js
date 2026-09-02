@@ -306,7 +306,7 @@
     $("#kpi-materiaux").textContent = state.materiaux.length;
     $("#kpi-k").textContent = C.coefficientK(state.settings).toFixed(3).replace(".", ",");
     $("#kpi-devis").textContent = euro.format(totals.ht);
-    $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId).length;
+    $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId || row.unitWarning).length;
     $("#kpi-recalage").textContent = recalagesRendement().filter(aRecaler).length + recalagesPrix().filter(aRecaler).length;
     $("#kpi-peremption").textContent = materiauxPerimes().length;
   }
@@ -982,7 +982,14 @@
 
   /* --------------------------------------------------------------------- metre */
 
+  // Un ouvrage a l'unite incompatible ne compte jamais, meme si ouvrageId est
+  // renseigne — notamment pour une session sauvegardee avant ce garde-fou.
+  function rowChiffrable(row) {
+    return Boolean(row.ouvrageId) && row.quantiteOk && !row.unitWarning;
+  }
+
   function metreRowPrice(row) {
+    if (row.unitWarning) return 0;
     const ouvrage = ouvrageById(row.ouvrageId);
     return ouvrage ? priceOf(ouvrage).vente * (Number(row.quantite) || 0) : 0;
   }
@@ -997,7 +1004,7 @@
       const group = groups.get(label);
       group.montant += metreRowPrice(row);
       group.count += 1;
-      if (row.ouvrageId && row.quantiteOk) group.chiffres += 1;
+      if (rowChiffrable(row)) group.chiffres += 1;
       const unite = ouvrage?.unite || row.unite || "";
       if (unite && !group.unites.includes(unite)) group.unites.push(unite);
       group.postes.push(row.numero);
@@ -1028,7 +1035,7 @@
 
   function renderMetre() {
     const analysed = state.metre.analysed;
-    const chiffres = analysed.filter((row) => row.ouvrageId && row.quantiteOk).length;
+    const chiffres = analysed.filter(rowChiffrable).length;
     const total = analysed.reduce((sum, row) => sum + metreRowPrice(row), 0);
 
     $("#metre-status").innerHTML = state.metre.fileName
@@ -1101,8 +1108,11 @@
   }
 
   function matchBadge(row) {
-    if (!row.ouvrageId) {
-      const suggestion = ouvrageById(row.suggestionId);
+    // row.unitWarning avec un ouvrageId encore renseigne : forme laissee par une
+    // session sauvegardee avant le garde-fou sur l'unite. Ne jamais l'afficher comme
+    // une correspondance valable, quelle que soit sa confiance mémorisée.
+    if (!row.ouvrageId || row.unitWarning) {
+      const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
       return suggestion
         ? `<span class="match none">à traiter</span><small>proche : ${esc(suggestion.nom)}</small>`
         : `<span class="match none">à traiter</span>`;
@@ -1273,7 +1283,13 @@
       return;
     }
 
-    const workbook = XLSX.read(sourceArrayBuffer, { cellFormula: true, cellStyles: true });
+    let workbook;
+    try {
+      workbook = XLSX.read(sourceArrayBuffer, { cellFormula: true, cellStyles: true });
+    } catch (error) {
+      notify(`Lecture du fichier d’origine impossible : ${error.message}`, "danger");
+      return;
+    }
     let written = 0;
     let skipped = 0;
     state.metre.analysed.forEach((row) => {
@@ -1338,6 +1354,9 @@
         ["Lot", "Poste", "Description", "Unité", "Quantité", "Ouvrage retenu", "Confiance", "PU HTVA", "Montant HTVA", "Statut"],
         ...state.metre.analysed.map((row) => {
           const ouvrage = ouvrageById(row.ouvrageId);
+          // Unite incompatible : meme avec un ouvrage encore renseigne (session
+          // sauvegardee avant ce garde-fou), ni le prix ni la confiance ne sont reels.
+          const utilisable = Boolean(ouvrage) && !row.unitWarning;
           return [
             row.lot,
             row.numero,
@@ -1345,8 +1364,8 @@
             row.unite,
             row.quantite,
             ouvrage?.nom || "",
-            ouvrage ? C.roundMoney(row.confidence) : "",
-            ouvrage ? C.roundMoney(priceOf(ouvrage).vente) : "",
+            utilisable ? C.roundMoney(row.confidence) : "",
+            utilisable ? C.roundMoney(priceOf(ouvrage).vente) : "",
             C.roundMoney(metreRowPrice(row)),
             row.unitWarning ? "Unité incompatible" : !ouvrage ? "Ouvrage manquant" : row.quantiteOk ? "OK" : "Quantité à vérifier",
           ];
@@ -1981,15 +2000,21 @@
       let rows = [];
       let skipped = 0;
       let headers = [];
+      // Variables locales : sourceWorkbook/sourceArrayBuffer/sourceFileName ne sont
+      // remplaces qu'une fois la lecture entierement reussie. Sans ça, un fichier
+      // corrompu pouvait laisser sourceArrayBuffer pointer vers les octets invalides
+      // pendant que l'ancien metre restait affiche — un « Compléter le fichier reçu »
+      // ulterieur aurait alors tente de relire ces octets et echoue silencieusement.
+      let nextWorkbook = null;
+      let nextArrayBuffer = null;
 
       if (["xlsx", "xlsm", "xls"].includes(extension)) {
         if (!requireXlsx()) return;
-        sourceArrayBuffer = await file.arrayBuffer();
-        sourceWorkbook = XLSX.read(sourceArrayBuffer, { cellFormula: true, cellStyles: true });
-        sourceFileName = file.name;
-        sourceWorkbook.SheetNames.forEach((sheetName) => {
+        nextArrayBuffer = await file.arrayBuffer();
+        nextWorkbook = XLSX.read(nextArrayBuffer, { cellFormula: true, cellStyles: true });
+        nextWorkbook.SheetNames.forEach((sheetName) => {
           if (C.normalizeText(sheetName).includes("recap")) return;
-          const grid = XLSX.utils.sheet_to_json(sourceWorkbook.Sheets[sheetName], { header: 1, defval: "", blankrows: true });
+          const grid = XLSX.utils.sheet_to_json(nextWorkbook.Sheets[sheetName], { header: 1, defval: "", blankrows: true });
           const parsed = C.rowsFromGrid(grid, sheetName);
           rows = rows.concat(parsed.rows);
           skipped += parsed.skipped;
@@ -1998,9 +2023,6 @@
           });
         });
       } else {
-        sourceWorkbook = null;
-        sourceArrayBuffer = null;
-        sourceFileName = file.name;
         const parsed = C.rowsFromGrid(C.parseDelimited(await file.text()), file.name);
         rows = parsed.rows;
         skipped = parsed.skipped;
@@ -2010,6 +2032,9 @@
       if (!rows.length) {
         notify("Aucune ligne exploitable : vérifiez que le fichier contient désignation, unité et quantité.", "danger");
       }
+      sourceWorkbook = nextWorkbook;
+      sourceArrayBuffer = nextArrayBuffer;
+      sourceFileName = file.name;
       state.metre = { ...emptyMetre(), fileName: file.name, rows, skipped };
       populateFieldMap(headers);
       saveState();
