@@ -62,18 +62,22 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
 
 ## Répondre à un marché public
 
-1. **Importer** le fichier reçu (`.xlsx`, `.xlsm`, `.xls`, `.csv`, `.tsv`). Les
-   feuilles multiples sont lues, la feuille « récapitulatif » est ignorée, les titres
-   de lot sont rattachés aux postes qui les suivent, et les sous-totaux comme les
-   tableaux de rappel en bas de feuille sont écartés.
+1. **Importer** le fichier reçu (`.xlsx`, `.xlsm`, `.xls`, `.csv`, `.tsv`), en indiquant
+   la **commune / pouvoir adjudicateur**. Les feuilles multiples sont lues, la feuille
+   « récapitulatif » est ignorée, les titres de lot sont rattachés aux postes qui les
+   suivent, et les sous-totaux comme les tableaux de rappel en bas de feuille sont
+   écartés.
 2. **Vérifier les colonnes** détectées automatiquement, y compris la colonne de prix
    unitaire à compléter.
-3. **Analyser** : chaque poste est rapproché d'un ouvrage, d'abord par code de métré
-   déjà connu (certitude), sinon par similarité de libellé (score affiché). Un ouvrage
-   dont l'unité est incompatible n'est jamais retenu, seulement signalé.
+3. **Analyser** : chaque poste est rapproché d'un ouvrage, d'abord par un code de métré
+   déjà appris pour **cette commune**, puis par un code du catalogue de départ partagé
+   entre marchés, sinon par similarité de libellé (score affiché). Un ouvrage dont
+   l'unité est incompatible n'est jamais retenu, seulement signalé.
 4. **Contrôler et corriger** les correspondances. « Confirmer et mémoriser » enregistre
-   les codes du cahier des charges sur les ouvrages : au marché suivant utilisant la
-   même codification, ils seront reconnus d'emblée.
+   le code du poste sur l'ouvrage, **propre à la commune indiquée** : au marché suivant
+   de cette même commune, il sera reconnu d'emblée, sans risquer de confondre deux
+   communes qui réutilisent coïncidemment le même numéro de poste pour des ouvrages
+   différents.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, sous-totaux et récapitulatif sont conservés — le
    pouvoir adjudicateur récupère son propre document, complété. Chaque complétion

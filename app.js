@@ -66,7 +66,7 @@
   /* ------------------------------------------------------------------- etat */
 
   function emptyMetre() {
-    return { fileName: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
+    return { fileName: "", commune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
   }
 
   function blankState() {
@@ -80,6 +80,10 @@
       devis: { ...CATALOG.defaultDevis, lignes: [] },
       chantiers: [],
       metre: emptyMetre(),
+      // Codes de metre appris, par commune : { commune: { code: ouvrageId } }. Un code
+      // reste propre a la commune qui l'a produit, contrairement au refsMetre du
+      // catalogue (partage entre tous les marches).
+      mappingCommunes: {},
     };
   }
 
@@ -160,6 +164,21 @@
         materiel: Number(ouvrage.materiel) || 0,
         motsCles: C.normalizeKeywords([ouvrage.motsCles, refs.join(", ")]),
       };
+    });
+
+    const ouvrageIds = new Set(next.ouvrages.map((ouvrage) => ouvrage.id));
+    next.mappingCommunes = {};
+    Object.entries(source.mappingCommunes || {}).forEach(([commune, codes]) => {
+      const communeKey = String(commune || "").trim();
+      if (!communeKey || !codes || typeof codes !== "object") return;
+      const clean = {};
+      Object.entries(codes).forEach(([code, ouvrageId]) => {
+        const codeKey = C.normalizeRef(code);
+        // Un ouvrage supprime depuis emporte son mapping communal : sinon un code
+        // pointerait vers un id qui n'existe plus, invisible jusqu'au prochain import.
+        if (codeKey && typeof ouvrageId === "string" && ouvrageIds.has(ouvrageId)) clean[codeKey] = ouvrageId;
+      });
+      if (Object.keys(clean).length) next.mappingCommunes[communeKey] = clean;
     });
 
     const devis = source.devis || {};
@@ -1045,6 +1064,15 @@
     const chiffres = analysed.filter(rowChiffrable).length;
     const total = analysed.reduce((sum, row) => sum + metreRowPrice(row), 0);
 
+    // Value fixee ici, jamais depuis le handler "input" du meme champ : sinon la
+    // frappe se ferait resauter le curseur a chaque caractere (cf. #ouvrage-search).
+    const communeInput = $("#metre-commune");
+    if (communeInput && document.activeElement !== communeInput) communeInput.value = state.metre.commune || "";
+    $("#metre-communes-connues").innerHTML = Object.keys(state.mappingCommunes)
+      .sort((a, b) => a.localeCompare(b, "fr"))
+      .map((commune) => `<option value="${esc(commune)}"></option>`)
+      .join("");
+
     $("#metre-status").innerHTML = state.metre.fileName
       ? `<strong>${esc(state.metre.fileName)}</strong> — ${state.metre.rows.length} poste(s) lu(s)${
           state.metre.skipped ? `, ${state.metre.skipped} ligne(s) ignorée(s)` : ""
@@ -1194,6 +1222,8 @@
     const alerts = [];
     const cache = new Map();
     const seenCodes = new Map();
+    const commune = String(state.metre.commune || "").trim();
+    const communeCodes = commune ? state.mappingCommunes[commune] : null;
 
     state.metre.analysed = state.metre.rows.map((raw, index) => {
       const numero = String(raw[mapping.poste] ?? "").trim() || String(index + 1);
@@ -1205,7 +1235,7 @@
       // chiffrer : ce n'est pas une anomalie a signaler comme les autres.
       const pourMemoire = C.isPourMemoire(description);
       const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk, pourMemoire };
-      const match = C.findMatch(base, state.ouvrages, cache);
+      const match = C.findMatch(base, state.ouvrages, cache, communeCodes);
 
       const label = `Poste ${numero}`;
       if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
@@ -1260,10 +1290,20 @@
     // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
     if (!ouvrage || !row.numero || row.unitWarning) return;
     const key = C.normalizeRef(row.numero);
+    if (!key) return;
+    const commune = String(state.metre.commune || "").trim();
+    if (commune) {
+      // Rattache le code a cette commune uniquement : deux communes qui reutilisent
+      // coincidemment le meme numero de poste pour des ouvrages differents ne
+      // s'ecrasent plus l'une l'autre (contrairement au refsMetre global ci-dessous,
+      // qui reste partage entre tous les marches).
+      if (!state.mappingCommunes[commune]) state.mappingCommunes[commune] = {};
+      state.mappingCommunes[commune][key] = ouvrage.id;
+      return;
+    }
+    // Aucune commune renseignee : comportement historique, sur le refsMetre global.
     // Un code de metre ne doit jamais designer deux ouvrages a la fois : sinon le
     // prochain chiffrage redevient arbitraire (le premier ouvrage trouve l'emporte).
-    // Un meme numero de poste (ex. "09.04") peut avoir ete appris sur un tout autre
-    // ouvrage lors d'un marche precedent sans rapport.
     state.ouvrages.forEach((other) => {
       if (other.id === ouvrage.id) return;
       if (other.refsMetre.some((ref) => C.normalizeRef(ref) === key)) {
@@ -1889,6 +1929,11 @@
       state.metre.analysed.forEach((row) => {
         if (row.ouvrageId === data.deleteOuvrage) row.ouvrageId = "";
       });
+      Object.values(state.mappingCommunes).forEach((codes) => {
+        Object.keys(codes).forEach((code) => {
+          if (codes[code] === data.deleteOuvrage) delete codes[code];
+        });
+      });
       if (editingOuvrageId === data.deleteOuvrage) editingOuvrageId = "";
     } else if (data.deleteLigne) {
       state.devis.lignes = state.devis.lignes.filter((ligne) => ligne.id !== data.deleteLigne);
@@ -1915,6 +1960,11 @@
 
     target.refsMetre = C.normalizeRefList([target.refsMetre, source.refsMetre]);
     target.motsCles = C.normalizeKeywords([target.motsCles, source.motsCles]);
+    Object.values(state.mappingCommunes).forEach((codes) => {
+      Object.keys(codes).forEach((code) => {
+        if (codes[code] === fromId) codes[code] = toId;
+      });
+    });
     state.devis.lignes.forEach((ligne) => {
       if (ligne.ouvrageId === fromId) ligne.ouvrageId = toId;
     });
@@ -2115,7 +2165,9 @@
       sourceWorkbook = nextWorkbook;
       sourceArrayBuffer = nextArrayBuffer;
       sourceFileName = file.name;
-      state.metre = { ...emptyMetre(), fileName: file.name, rows, skipped };
+      // La commune est conservee d'un import a l'autre : plusieurs lots d'un meme
+      // marche sont generalement importes l'un apres l'autre.
+      state.metre = { ...emptyMetre(), commune: state.metre.commune, fileName: file.name, rows, skipped };
       populateFieldMap(headers);
       saveState();
       render();
@@ -2125,6 +2177,11 @@
     } finally {
       event.target.value = "";
     }
+  });
+
+  $("#metre-commune").addEventListener("input", (event) => {
+    state.metre.commune = event.target.value;
+    saveState();
   });
 
   $("#analyse-metre").addEventListener("click", analyseMetre);

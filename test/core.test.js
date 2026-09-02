@@ -425,6 +425,57 @@ test("un code d'une autre codification n'est pas confondu", () => {
   assert.equal(match.ouvrageId, "");
 });
 
+test("un code appris pour une commune est prioritaire, meme absent du refsMetre du catalogue", () => {
+  const communeCodes = { "09.04": "c" };
+  const match = C.findMatch(
+    { poste: "09.04", numero: "09.04", description: "", unite: "m" },
+    ouvragesTest,
+    new Map(),
+    communeCodes,
+  );
+  assert.equal(match.ouvrageId, "c");
+  assert.equal(match.confidence, 1);
+  assert.equal(match.reason, "code connu (commune)");
+});
+
+test("deux communes peuvent reutiliser le meme numero de poste sans se marcher dessus", () => {
+  // "09.04" designe l'ouvrage c pour la commune X, l'ouvrage b pour la commune Y :
+  // chaque table de commune reste independante, sans effet sur l'autre.
+  const matchX = C.findMatch(
+    { poste: "09.04", numero: "09.04", description: "", unite: "m" },
+    ouvragesTest,
+    new Map(),
+    { "09.04": "c" },
+  );
+  const matchY = C.findMatch(
+    { poste: "09.04", numero: "09.04", description: "", unite: "m2" },
+    ouvragesTest,
+    new Map(),
+    { "09.04": "b" },
+  );
+  assert.equal(matchX.ouvrageId, "c");
+  assert.equal(matchY.ouvrageId, "b");
+});
+
+test("un code appris pour une commune reste soumis au garde-fou d'unite", () => {
+  const communeCodes = { "09.04": "a" }; // ouvrage a se chiffre au m2
+  const match = C.findMatch(
+    { poste: "09.04", numero: "09.04", description: "", unite: "m" },
+    ouvragesTest,
+    new Map(),
+    communeCodes,
+  );
+  assert.equal(match.ouvrageId, "", "aucun prix ne doit etre calculable pour ce poste");
+  assert.equal(match.unitWarning, true);
+  assert.equal(match.suggestionId, "a");
+});
+
+test("sans table de commune, le comportement est inchange (retro-compatibilite)", () => {
+  const match = C.findMatch({ poste: "2.05", numero: "2.05", description: "", unite: "m2" }, ouvragesTest, new Map());
+  assert.equal(match.ouvrageId, "a");
+  assert.equal(match.reason, "code connu");
+});
+
 test("a defaut de code, le libelle rapproche le bon ouvrage", () => {
   const match = C.findMatch(
     { poste: "99.99", numero: "99.99", description: "Mise en peinture des murs intérieurs", unite: "m²" },
