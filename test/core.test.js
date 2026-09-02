@@ -648,6 +648,28 @@ test("une unite differente elimine toute proximite, quel que soit le libelle", (
   assert.equal(C.ouvrageProximity(brouillon, facadeExistante), 0);
 });
 
+test("ouvrageProximityDetail expose le score par signal, pas seulement le total", () => {
+  // Meme cas critique que ci-dessus : le detail doit montrer que seule la
+  // composition s'ecarte, pas juste renvoyer un pourcentage global qui les noie.
+  const brouillon = {
+    nom: facadeExistante.nom,
+    unite: "m2",
+    heures: facadeExistante.heures,
+    materiel: facadeExistante.materiel,
+    composants: [
+      { materiauId: "mortier", quantite: 20 },
+      { materiauId: "treillis", quantite: 3 },
+      { materiauId: "primaire", quantite: 1 },
+    ],
+  };
+  const detail = C.ouvrageProximityDetail(brouillon, facadeExistante);
+  assert.ok(detail.textScore >= 0.98, "libelle identique");
+  assert.equal(detail.rendementScore, 1, "rendement identique");
+  assert.equal(detail.materielScore, 1, "materiel identique");
+  assert.ok(detail.composantScore < 0.7, `composition tres differente, obtenu ${detail.composantScore}`);
+  assert.equal(detail.score, C.ouvrageProximity(brouillon, facadeExistante), "coherent avec ouvrageProximity");
+});
+
 test("bestOuvrageMatch retient le candidat le plus proche parmi le catalogue", () => {
   const autre = { id: "other", nom: "Carrelage de sol grès cérame", unite: "m2", composants: [], heures: 0.5, materiel: 5 };
   const best = C.bestOuvrageMatch(
@@ -655,6 +677,8 @@ test("bestOuvrageMatch retient le candidat le plus proche parmi le catalogue", (
     [facadeExistante, autre],
   );
   assert.equal(best.ouvrage.id, "fac003");
+  assert.ok(best.detail, "le detail par signal doit accompagner le meilleur candidat");
+  assert.equal(best.detail.score, best.score);
 });
 
 test("bestOuvrageMatch renvoie null s'il n'y a aucun candidat de meme unite", () => {

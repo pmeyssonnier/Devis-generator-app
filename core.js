@@ -745,8 +745,13 @@
    * libelle, les matieres reellement partagees et la proximite du rendement/materiel.
    * Sert a proposer "utiliser l'existant" avant de creer un quasi-doublon.
    */
-  function ouvrageProximity(payload, ouvrage) {
-    if (normalizeUnit(payload.unite) !== normalizeUnit(ouvrage.unite)) return 0;
+  // Detail par signal (libelle/composition/rendement/materiel) en plus du score
+  // global : un seul pourcentage masque "les deux se ressemblent, seule la
+  // composition differe", ce que le detail rend visible d'un coup d'oeil.
+  function ouvrageProximityDetail(payload, ouvrage) {
+    if (normalizeUnit(payload.unite) !== normalizeUnit(ouvrage.unite)) {
+      return { score: 0, textScore: 0, composantScore: null, rendementScore: null, materielScore: null };
+    }
 
     const textScore = matchScore(payload.nom, ouvrage, null);
 
@@ -788,17 +793,21 @@
       { value: materielScore, weight: 0.1 },
     ].filter((term) => term.value !== null);
     const totalWeight = terms.reduce((sum, term) => sum + term.weight, 0);
-    if (!totalWeight) return textScore;
+    const score = totalWeight ? terms.reduce((sum, term) => sum + term.value * term.weight, 0) / totalWeight : textScore;
 
-    return terms.reduce((sum, term) => sum + term.value * term.weight, 0) / totalWeight;
+    return { score, textScore, composantScore, rendementScore, materielScore };
+  }
+
+  function ouvrageProximity(payload, ouvrage) {
+    return ouvrageProximityDetail(payload, ouvrage).score;
   }
 
   // Le candidat le plus proche parmi le catalogue, ou null si rien d'assez proche.
   function bestOuvrageMatch(payload, ouvrages) {
     let best = null;
     ouvrages.forEach((ouvrage) => {
-      const score = ouvrageProximity(payload, ouvrage);
-      if (score > 0 && (!best || score > best.score)) best = { ouvrage, score };
+      const detail = ouvrageProximityDetail(payload, ouvrage);
+      if (detail.score > 0 && (!best || detail.score > best.score)) best = { ouvrage, score: detail.score, detail };
     });
     return best;
   }
@@ -1073,6 +1082,7 @@
     findMatch,
     findDuplicates,
     ouvrageProximity,
+    ouvrageProximityDetail,
     bestOuvrageMatch,
     findHeader,
     findHeaderRowIndex,

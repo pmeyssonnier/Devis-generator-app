@@ -171,6 +171,7 @@
 
     const ouvrageIds = new Set(next.ouvrages.map((ouvrage) => ouvrage.id));
     next.mappingCommunes = {};
+    const conflitsMigration = [];
     Object.entries(source.mappingCommunes || {}).forEach(([commune, codes]) => {
       const communeKey = String(commune || "").trim();
       if (!communeKey || !codes || typeof codes !== "object") return;
@@ -184,10 +185,27 @@
         const codeKey = C.normalizeRef(code);
         // Un ouvrage supprime depuis emporte son mapping communal : sinon un code
         // pointerait vers un id qui n'existe plus, invisible jusqu'au prochain import.
-        if (codeKey && typeof ouvrageId === "string" && ouvrageIds.has(ouvrageId)) clean[codeKey] = ouvrageId;
+        if (!codeKey || typeof ouvrageId !== "string" || !ouvrageIds.has(ouvrageId)) return;
+        if (clean[codeKey] && clean[codeKey] !== ouvrageId) {
+          // Deux profils fusionnes (ex. "Schaerbeek"/"schaerbeek") portaient une
+          // correspondance differente pour le meme code : on garde la premiere
+          // rencontree plutot que d'ecraser silencieusement, et on le signale.
+          conflitsMigration.push(`${codeKey} (commune « ${cleKey} »)`);
+          return;
+        }
+        clean[codeKey] = ouvrageId;
       });
       if (Object.keys(clean).length) next.mappingCommunes[cleKey] = clean;
     });
+    if (conflitsMigration.length) {
+      // Cas rare (donnees anciennes deja incoherentes) : pas de UI dediee pour
+      // l'instant, mais au moins visible pour qui regarde la console au lieu de
+      // disparaitre sans trace.
+      console.warn(
+        `Conflit détecté pendant la fusion des communes homonymes : ${conflitsMigration.join(", ")}. ` +
+          "La première correspondance rencontrée a été conservée.",
+      );
+    }
 
     const devis = source.devis || {};
     next.devis = {
@@ -1347,10 +1365,15 @@
   const SIMILARITE_OUVRAGE_SEUIL = 0.55;
 
   function decrireProximiteOuvrage(payload, match) {
-    const pct = Math.round(match.score * 100);
+    const pct = (valeur) => (valeur === null || valeur === undefined ? "—" : `${Math.round(valeur * 100)} %`);
+    const d = match.detail;
     const lignes = [
       `Un ouvrage proche existe déjà dans la bibliothèque : « ${match.ouvrage.nom} » (${match.ouvrage.poste}).`,
-      `Proximité technique estimée : ${pct} % (libellé, matériaux, rendement, matériel).`,
+      `Proximité globale : ${pct(match.score)}`,
+      `  Libellé      : ${pct(d.textScore)}`,
+      `  Composition  : ${pct(d.composantScore)}`,
+      `  Rendement    : ${pct(d.rendementScore)}`,
+      `  Matériel     : ${pct(d.materielScore)}`,
       "",
       "Composition — existant → saisi :",
     ];
