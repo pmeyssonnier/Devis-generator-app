@@ -79,7 +79,10 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
      similarité de libellé.
 
    Dans les deux cas, un ouvrage dont l'unité est incompatible n'est jamais retenu,
-   seulement signalé.
+   seulement signalé. La commune prise en compte est celle **au moment de l'analyse** :
+   la modifier ensuite affiche un rappel de relancer l'analyse, et les confirmations
+   faites entre-temps restent mémorisées pour la commune de l'analyse (les lignes ont
+   été rapprochées avec sa table de codes, elles ne doivent pas atterrir ailleurs).
 4. **Contrôler et corriger** les correspondances. « Confirmer et mémoriser » enregistre
    le code du poste sur l'ouvrage, **propre à la commune indiquée** : au marché suivant
    de cette même commune, il sera reconnu d'emblée, sans risquer de confondre deux

@@ -7,10 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Moindre privilege : le job de tests (qui tourne aussi sur les PR) n'a besoin que de
+# lire le depot. Les droits Pages/OIDC sont accordes au seul job deploy.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Un nouveau push annule le run en cours sur la meme branche/PR plutot que de
 # s'empiler derriere lui — sans annuler celui d'une autre branche/PR en parallele
@@ -37,6 +37,10 @@ jobs:
     # publie le site.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
