@@ -1548,7 +1548,12 @@
     renderSettingsComputedValues();
     renderKpis();
     // Le detail des prix depend de K : on ne rafraichit que ce qui l'utilise.
-    if (event.target.type === "range" || event.target.name === "coutHoraire" || event.target.name === "tva") {
+    if (
+      event.target.type === "range" ||
+      event.target.name === "coutHoraire" ||
+      event.target.name === "tva" ||
+      event.target.name === "formuleK"
+    ) {
       renderDashboard();
       renderOuvrages();
       renderDevis();
