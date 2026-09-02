@@ -659,14 +659,27 @@
 
   /*
    * Rapproche une ligne de metre d'un ouvrage.
-   * 1. code deja connu (refsMetre) -> certitude
-   * 2. sinon meilleur score parmi les ouvrages d'unite compatible
-   * 3. si le meilleur score global a une unite incompatible, on le signale sans le retenir
+   * 1. code appris sur cette commune (communeCodes) -> certitude, propre au marche
+   * 2. sinon code deja connu (refsMetre du catalogue, partage entre marches) -> certitude
+   * 3. sinon meilleur score parmi les ouvrages d'unite compatible
+   * 4. si le meilleur score global a une unite incompatible, on le signale sans le retenir
    */
-  function findMatch(row, ouvrages, cache) {
+  function findMatch(row, ouvrages, cache, communeCodes) {
     const codes = [row.poste, row.numero]
       .map(normalizeRef)
       .filter(Boolean);
+
+    if (codes.length && communeCodes) {
+      const mappedId = codes.map((code) => communeCodes[code]).find(Boolean);
+      const mapped = mappedId ? ouvrages.find((ouvrage) => ouvrage.id === mappedId) : null;
+      if (mapped) {
+        // Meme garde-fou que pour un code connu du catalogue : l'unite reste eliminatoire.
+        if (!unitsCompatible(mapped.unite, row.unite)) {
+          return { ouvrageId: "", confidence: 1, reason: "", unitWarning: true, suggestionId: mapped.id };
+        }
+        return { ouvrageId: mapped.id, confidence: 1, reason: "code connu (commune)", unitWarning: false, suggestionId: "" };
+      }
+    }
 
     if (codes.length) {
       const byCode = ouvrages.find((ouvrage) =>
