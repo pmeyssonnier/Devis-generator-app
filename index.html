@@ -502,12 +502,22 @@
                 <label><input name="tva" type="radio" value="21" /> 21 %</label>
               </fieldset>
               <fieldset class="tax-field">
-                <legend>Formule du coefficient K</legend>
+                <legend>
+                  Formule du coefficient K
+                  <button
+                    type="button"
+                    class="info-toggle"
+                    data-info-toggle="formuleK-info"
+                    aria-expanded="false"
+                    aria-controls="formuleK-info"
+                    aria-label="Explication de la formule du coefficient K"
+                  >i</button>
+                </legend>
                 <label><input name="formuleK" type="radio" value="additive" /> Additive (par défaut)</label>
                 <label><input name="formuleK" type="radio" value="multiplicative" /> Multiplicative</label>
-                <small>Additive : K = 1 + (somme des taux) / 100. Multiplicative : chaque taux s’applique sur la
-                  base déjà majorée par les précédents — K légèrement plus élevé, prix de vente plus élevés à
-                  taux égaux.</small>
+                <small id="formuleK-info" hidden>Additive : K = 1 + (somme des taux) / 100. Multiplicative : chaque
+                  taux s’applique sur la base déjà majorée par les précédents — K légèrement plus élevé, prix de
+                  vente plus élevés à taux égaux.</small>
               </fieldset>
               <div class="coefficient-box">
                 <span>Coefficient K appliqué aux coûts directs</span>

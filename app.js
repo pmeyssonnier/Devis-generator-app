@@ -1767,6 +1767,14 @@
     if (!target) return;
     const data = target.dataset;
 
+    if (data.infoToggle) {
+      const info = document.getElementById(data.infoToggle);
+      if (!info) return;
+      const hidden = info.hasAttribute("hidden");
+      info.toggleAttribute("hidden", !hidden);
+      target.setAttribute("aria-expanded", String(hidden));
+      return;
+    }
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);
     if (data.confirmPrixMateriau) return confirmerPrixMateriau(data.confirmPrixMateriau);
     if (data.editMateriau) return startMateriauEdit(data.editMateriau);
