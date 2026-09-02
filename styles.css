@@ -447,6 +447,7 @@ textarea {
 
 .tax-field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
   border: 1px solid var(--line);
@@ -455,10 +456,42 @@ textarea {
 }
 
 .tax-field legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 6px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.info-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.info-toggle:hover,
+.info-toggle[aria-expanded="true"] {
+  border-color: var(--accent-dark);
+  color: var(--accent-dark);
+}
+
+.tax-field small {
+  flex-basis: 100%;
+  color: var(--muted);
 }
 
 .tax-field label {
