@@ -82,6 +82,7 @@
     C.normalizeState(source, {
       catalog: CATALOG,
       uid,
+      today: todayLocalISO(),
       // Cas rare (donnees anciennes deja incoherentes) : pas de UI dediee, mais au
       // moins une trace pour qui regarde la console.
       onWarning: (message) => console.warn(message),
@@ -683,26 +684,66 @@
 
   /* --------------------------------------------------------------------- devis */
 
-  function calculateDevisTotals() {
-    const ht = state.devis.lignes.reduce((sum, ligne) => {
+  // Le devis en cours d'edition. La liste n'est jamais vide (normalizeState garantit
+  // au moins une entree), mais on retombe sur la premiere si l'id ne designe rien.
+  function devisCourant() {
+    return state.devisList.find((devis) => devis.id === state.devisCourantId) || state.devisList[0];
+  }
+
+  function totauxDevis(devis) {
+    const ht = devis.lignes.reduce((somme, ligne) => {
       const ouvrage = ouvrageById(ligne.ouvrageId);
-      return ouvrage ? sum + priceOf(ouvrage).vente * ligne.quantite : sum;
+      return ouvrage ? somme + priceOf(ouvrage).vente * ligne.quantite : somme;
     }, 0);
-    const tva = ht * (Number(state.devis.tva ?? state.settings.tva) / 100);
+    const tva = ht * (Number(devis.tva ?? state.settings.tva) / 100);
     return { ht, tva, ttc: ht + tva };
   }
 
+  function calculateDevisTotals() {
+    return totauxDevis(devisCourant());
+  }
+
   function renderDevis() {
+    const devis = devisCourant();
     const meta = $("#devis-meta-form");
-    meta.elements.client.value = state.devis.client;
-    meta.elements.adresse.value = state.devis.adresse;
-    meta.elements.objet.value = state.devis.objet;
-    meta.elements.tva.value = state.devis.tva;
+    meta.elements.numero.value = devis.numero;
+    meta.elements.date.value = devis.date;
+    meta.elements.client.value = devis.client;
+    meta.elements.adresse.value = devis.adresse;
+    meta.elements.objet.value = devis.objet;
+    meta.elements.tva.value = devis.tva;
     updateDevisMetaMode();
 
-    const orphan = state.devis.lignes.filter((ligne) => !ouvrageById(ligne.ouvrageId)).length;
-    $("#devis-lines").innerHTML = state.devis.lignes.length
-      ? state.devis.lignes
+    // Liste : chaque devis garde son numero, sa date et son montant. Un nouveau devis
+    // n'ecrase plus le precedent, contrairement au modele a un seul devis d'origine.
+    $("#devis-list").innerHTML = [...state.devisList]
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.numero).localeCompare(String(a.numero)))
+      .map((item) => {
+        const courant = item.id === devis.id;
+        const totaux = totauxDevis(item);
+        return `<li class="${courant ? "courant" : ""}">
+          <span class="devis-resume">
+            <strong>${esc(item.numero || "sans numéro")}${item.client ? ` · ${esc(item.client)}` : ""}</strong>
+            <small>${item.date ? new Date(`${item.date}T00:00:00`).toLocaleDateString("fr-BE") : "sans date"} · ${
+              item.lignes.length
+            } ligne(s) · ${euro.format(totaux.ttc)} TVAC${courant ? " · en cours" : ""}</small>
+          </span>
+          <span class="devis-actions">
+            ${courant ? "" : `<button type="button" class="ghost" data-devis-ouvrir="${item.id}">Ouvrir</button>`}
+            <button type="button" class="ghost" data-devis-dupliquer="${item.id}">Dupliquer</button>
+            ${
+              state.devisList.length > 1
+                ? `<button type="button" class="ghost danger" data-devis-supprimer="${item.id}">Supprimer</button>`
+                : ""
+            }
+          </span>
+        </li>`;
+      })
+      .join("");
+
+    const orphan = devis.lignes.filter((ligne) => !ouvrageById(ligne.ouvrageId)).length;
+    $("#devis-lines").innerHTML = devis.lignes.length
+      ? devis.lignes
           .map((ligne) => {
             const ouvrage = ouvrageById(ligne.ouvrageId);
             if (!ouvrage) {
@@ -738,7 +779,7 @@
 
   function updateDevisMetaMode() {
     const form = $("#devis-meta-form");
-    ["client", "adresse", "objet", "tva"].forEach((field) => {
+    ["numero", "date", "client", "adresse", "objet", "tva"].forEach((field) => {
       form.elements[field].disabled = !editingDevisMeta;
     });
     $("#edit-devis-meta").classList.toggle("hidden", editingDevisMeta);
@@ -1725,6 +1766,13 @@
     XLSX.writeFile(workbook, "metre-recapitulatif.xlsx");
   }
 
+  // Un nom de fichier par devis : trois devis exportes ne doivent pas se recouvrir
+  // dans le dossier de telechargement.
+  function nomFichierDevis(extension) {
+    const numero = (devisCourant().numero || "sans-numero").replace(/[^\w.-]+/g, "-");
+    return `devis-${numero}.${extension}`;
+  }
+
   function devisRows() {
     const totals = calculateDevisTotals();
     return [
@@ -1732,12 +1780,14 @@
       [state.entrepreneur.adresse],
       [state.entrepreneur.numeroTva ? `TVA ${state.entrepreneur.numeroTva}` : ""],
       [],
-      ["Client", state.devis.client],
-      ["Adresse du chantier", state.devis.adresse],
-      ["Objet", state.devis.objet],
+      ["Devis", devisCourant().numero],
+      ["Date", devisCourant().date],
+      ["Client", devisCourant().client],
+      ["Adresse du chantier", devisCourant().adresse],
+      ["Objet", devisCourant().objet],
       [],
       ["Ouvrage", "Unité", "Quantité", "PU HTVA", "Total HTVA"],
-      ...state.devis.lignes.map((ligne) => {
+      ...devisCourant().lignes.map((ligne) => {
         const ouvrage = ouvrageById(ligne.ouvrageId);
         if (!ouvrage) return ["Ouvrage supprimé", "", ligne.quantite, "", ""];
         const calc = priceOf(ouvrage);
@@ -1745,7 +1795,7 @@
       }),
       [],
       ["Total HTVA", "", "", "", C.roundMoney(totals.ht)],
-      [`TVA ${number.format(state.devis.tva)} %`, "", "", "", C.roundMoney(totals.tva)],
+      [`TVA ${number.format(devisCourant().tva)} %`, "", "", "", C.roundMoney(totals.tva)],
       ["Total TVAC", "", "", "", C.roundMoney(totals.ttc)],
     ];
   }
@@ -1956,11 +2006,44 @@
   $("#devis-meta-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.devis = { ...state.devis, ...data, tva: Number(data.tva) || 0 };
+    const devis = devisCourant();
+    Object.assign(devis, {
+      numero: String(data.numero || "").trim() || devis.numero,
+      date: data.date || devis.date,
+      client: data.client,
+      adresse: data.adresse,
+      objet: data.objet,
+      tva: Number(data.tva) || 0,
+    });
     editingDevisMeta = false;
     saveState();
     render();
   });
+
+  function nouveauDevis(modele) {
+    const date = todayLocalISO();
+    const devis = {
+      id: uid(),
+      numero: C.numeroDevisSuivant(state.devisList, date.slice(0, 4)),
+      date,
+      client: modele?.client || "",
+      adresse: modele?.adresse || "",
+      objet: modele?.objet || "",
+      tva: modele ? modele.tva : Number(state.settings.tva) || 21,
+      // Copie des lignes : dupliquer un devis ne doit pas partager ses lignes avec
+      // l'original, sinon modifier l'un modifierait l'autre.
+      lignes: (modele?.lignes || []).map((ligne) => ({ ...ligne, id: uid() })),
+    };
+    state.devisList.push(devis);
+    state.devisCourantId = devis.id;
+    editingDevisMeta = true;
+    editingDevisLineId = "";
+    saveState();
+    render();
+    notify(`Devis « ${devis.numero} » créé.`, "info");
+  }
+
+  $("#nouveau-devis").addEventListener("click", () => nouveauDevis(null));
 
   $("#edit-devis-meta").addEventListener("click", () => {
     editingDevisMeta = true;
@@ -1976,11 +2059,11 @@
     }
     const payload = { ouvrageId: data.ouvrage, quantite: Number(data.quantite) || 0 };
     if (editingDevisLineId) {
-      const ligne = state.devis.lignes.find((item) => item.id === editingDevisLineId);
+      const ligne = devisCourant().lignes.find((item) => item.id === editingDevisLineId);
       if (ligne) Object.assign(ligne, payload);
       editingDevisLineId = "";
     } else {
-      state.devis.lignes.push({ id: uid(), ...payload });
+      devisCourant().lignes.push({ id: uid(), ...payload });
     }
     event.currentTarget.reset();
     updateDevisLineMode();
@@ -2167,6 +2250,30 @@
       toggleFlagDetail(target, Number(data.metreFlagRow), data.metreFlagKind);
       return;
     }
+    if (data.devisOuvrir) {
+      state.devisCourantId = data.devisOuvrir;
+      editingDevisMeta = false;
+      editingDevisLineId = "";
+      saveState();
+      render();
+      return;
+    }
+    if (data.devisDupliquer) {
+      const modele = state.devisList.find((devis) => devis.id === data.devisDupliquer);
+      if (modele) nouveauDevis(modele);
+      return;
+    }
+    if (data.devisSupprimer) {
+      const devis = state.devisList.find((item) => item.id === data.devisSupprimer);
+      if (!devis || state.devisList.length < 2) return;
+      if (!window.confirm(`Supprimer le devis « ${devis.numero} » et ses ${devis.lignes.length} ligne(s) ?`)) return;
+      state.devisList = state.devisList.filter((item) => item.id !== data.devisSupprimer);
+      if (state.devisCourantId === data.devisSupprimer) state.devisCourantId = state.devisList[0].id;
+      editingDevisLineId = "";
+      saveState();
+      render();
+      return;
+    }
     if (data.metreApply !== undefined) return applySuggestion(Number(data.metreApply));
     if (data.metreRouvrir) {
       rouvrirMetre(data.metreRouvrir);
@@ -2211,7 +2318,10 @@
       if (editingMateriauId === data.deleteMateriau) editingMateriauId = "";
     } else if (data.deleteOuvrage) {
       const ouvrage = ouvrageById(data.deleteOuvrage);
-      const usedDevis = state.devis.lignes.filter((ligne) => ligne.ouvrageId === data.deleteOuvrage).length;
+      const usedDevis = state.devisList.reduce(
+        (total, devis) => total + devis.lignes.filter((ligne) => ligne.ouvrageId === data.deleteOuvrage).length,
+        0,
+      );
       // Meme principe que pour un materiau : le releve de chantier n'est pas modifie,
       // seulement signale avant suppression (il s'affichera « ouvrage supprimé »).
       const usedChantiers = state.chantiers.reduce(
@@ -2229,7 +2339,7 @@
       C.supprimerOuvrage(state, data.deleteOuvrage);
       if (editingOuvrageId === data.deleteOuvrage) editingOuvrageId = "";
     } else if (data.deleteLigne) {
-      state.devis.lignes = state.devis.lignes.filter((ligne) => ligne.id !== data.deleteLigne);
+      devisCourant().lignes = devisCourant().lignes.filter((ligne) => ligne.id !== data.deleteLigne);
       if (editingDevisLineId === data.deleteLigne) editingDevisLineId = "";
     } else {
       return;
@@ -2349,7 +2459,7 @@
   }
 
   function startDevisLineEdit(id) {
-    const ligne = state.devis.lignes.find((item) => item.id === id);
+    const ligne = devisCourant().lignes.find((item) => item.id === id);
     if (!ligne) return;
     editingDevisLineId = id;
     const form = $("#devis-line-form");
@@ -2549,17 +2659,20 @@
     ]);
   });
 
-  $("#export-devis").addEventListener("click", () => exportCsv("devis-client.csv", devisRows()));
+  $("#export-devis").addEventListener("click", () => exportCsv(nomFichierDevis("csv"), devisRows()));
 
   $("#export-devis-xlsx").addEventListener("click", () => {
     if (!requireXlsx()) return;
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(devisRows()), "Devis");
-    XLSX.writeFile(workbook, "devis-client.xlsx");
+    XLSX.writeFile(workbook, nomFichierDevis("xlsx"));
   });
 
   $("#export-devis-json").addEventListener("click", () => {
-    downloadBlob("devis-client.json", new Blob([JSON.stringify({ devis: state.devis }, null, 2)], { type: "application/json" }));
+    downloadBlob(
+      nomFichierDevis("json"),
+      new Blob([JSON.stringify({ devis: devisCourant() }, null, 2)], { type: "application/json" }),
+    );
   });
 
   $("#import-devis-json").addEventListener("change", async (event) => {
@@ -2569,11 +2682,18 @@
       const imported = JSON.parse(await file.text());
       const devis = imported.devis || imported;
       if (!Array.isArray(devis.lignes)) throw new Error("structure invalide");
-      state.devis = normalizeState({ ...state, devis }).devis;
+      // Un devis importe s'ajoute a la liste au lieu d'ecraser celui qui est ouvert.
+      const [importe] = normalizeState({ ...state, devisList: [devis], devisCourantId: "" }).devisList;
+      importe.id = uid();
+      if (state.devisList.some((autre) => autre.numero === importe.numero)) {
+        importe.numero = C.numeroDevisSuivant(state.devisList, (importe.date || todayLocalISO()).slice(0, 4));
+      }
+      state.devisList.push(importe);
+      state.devisCourantId = importe.id;
       editingDevisMeta = false;
       saveState();
       render();
-      notify("Devis importé.", "info");
+      notify(`Devis « ${importe.numero} » importé et ouvert.`, "info");
     } catch {
       notify("Ce fichier n’est pas un devis exporté par l’application.", "danger");
     } finally {

@@ -144,6 +144,24 @@ rechargement, et l'historique reste vide.
 > La mise en forme du classeur est préservée dans la limite de ce que SheetJS sait
 > réécrire (formules, fusions et largeurs oui ; polices, fonds et bordures non).
 
+## Devis client
+
+La vue **Devis** tient une liste, pas un seul document : un nouveau devis n'écrase plus
+le précédent.
+
+- **Nouveau devis** attribue un numéro de la forme `2026-001` (incrémenté par année) et
+  la date du jour. Numéro et date restent modifiables si l'entreprise a sa propre
+  numérotation — celle-ci est alors laissée telle quelle par la suite.
+- **Dupliquer** reprend client, objet, TVA et lignes sous un nouveau numéro : pratique
+  pour une variante ou un chantier voisin. Les lignes sont copiées, pas partagées —
+  modifier l'un ne touche pas l'autre.
+- **Ouvrir** bascule sur un autre devis, **Supprimer** en retire un (jamais le dernier).
+- Les exports (Excel, CSV, JSON) portent le numéro du devis dans leur nom de fichier, et
+  un devis importé en JSON s'ajoute à la liste au lieu de remplacer celui qui est ouvert.
+
+Une bibliothèque enregistrée avant ce changement ne contenait qu'un devis : il devient
+le premier de la liste, avec un numéro et une date attribués s'il n'en avait pas.
+
 ## Corriger la bibliothèque avec les chantiers réalisés
 
 Un devis repose sur des rendements estimés. La vue **Chantiers** sert à les confronter
@@ -247,8 +265,11 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 ## Sauvegarde
 
 « Exporter les données » produit un JSON contenant la bibliothèque, les paramètres et
-le devis en cours. C'est le seul moyen de transférer la mémoire de chiffrage d'un poste
-à un autre, ou de s'en prémunir contre un vidage du navigateur.
+tous les devis. C'est le seul moyen de transférer la mémoire de chiffrage d'un poste à
+un autre, ou de s'en prémunir contre un vidage du navigateur.
+
+L'historique des métrés et le classeur reçu vivent dans IndexedDB, en dehors de cet
+export : ils restent propres à l'appareil.
 
 ## Limites connues
 

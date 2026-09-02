@@ -556,17 +556,31 @@
         <!-- Devis client ---------------------------------------------------- -->
         <section class="view" id="devis">
           <div class="devis-layout">
-            <form class="panel form-panel" id="devis-meta-form">
-              <div class="panel-head">
-                <h2>Informations client</h2>
-                <button class="ghost" id="edit-devis-meta" type="button">Éditer</button>
-              </div>
-              <label>Client<input name="client" placeholder="Nom du client" /></label>
-              <label>Adresse du chantier<input name="adresse" placeholder="Rue, ville" /></label>
-              <label>Objet<textarea name="objet" rows="3" placeholder="Travaux de rénovation"></textarea></label>
-              <label>TVA (%)<input name="tva" type="number" min="0" step="0.1" /></label>
-              <button class="primary hidden" id="save-devis-meta" type="submit">Sauvegarder</button>
-            </form>
+            <div class="devis-colonne">
+              <section class="panel">
+                <div class="panel-head">
+                  <h2>Devis</h2>
+                  <button class="ghost" id="nouveau-devis" type="button">Nouveau devis</button>
+                </div>
+                <ul class="devis-list" id="devis-list"></ul>
+              </section>
+
+              <form class="panel form-panel" id="devis-meta-form">
+                <div class="panel-head">
+                  <h2>Informations client</h2>
+                  <button class="ghost" id="edit-devis-meta" type="button">Éditer</button>
+                </div>
+                <div class="devis-identite">
+                  <label>Numéro<input name="numero" placeholder="2026-001" /></label>
+                  <label>Date<input name="date" type="date" /></label>
+                </div>
+                <label>Client<input name="client" placeholder="Nom du client" /></label>
+                <label>Adresse du chantier<input name="adresse" placeholder="Rue, ville" /></label>
+                <label>Objet<textarea name="objet" rows="3" placeholder="Travaux de rénovation"></textarea></label>
+                <label>TVA (%)<input name="tva" type="number" min="0" step="0.1" inputmode="decimal" /></label>
+                <button class="primary hidden" id="save-devis-meta" type="submit">Sauvegarder</button>
+              </form>
+            </div>
             <section class="panel">
               <div class="panel-head">
                 <h2>Lignes du devis</h2>
