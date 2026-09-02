@@ -77,7 +77,10 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    le code du poste sur l'ouvrage, **propre à la commune indiquée** : au marché suivant
    de cette même commune, il sera reconnu d'emblée, sans risquer de confondre deux
    communes qui réutilisent coïncidemment le même numéro de poste pour des ouvrages
-   différents.
+   différents. Pour un poste non reconnu, **« Créer un ouvrage à partir de ce poste »**
+   pré-remplit le formulaire (libellé, unité) — avant l'enregistrement, si un ouvrage
+   techniquement proche existe déjà (libellé, matériaux, rendement, matériel), l'app le
+   signale et propose de le réutiliser plutôt que de créer un quasi-doublon.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, sous-totaux et récapitulatif sont conservés — le
    pouvoir adjudicateur récupère son propre document, complété. Chaque complétion

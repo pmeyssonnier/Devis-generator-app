@@ -528,6 +528,79 @@ test("deux ouvrages proches et de meme unite sont signales comme doublons", () =
   );
 });
 
+/* ------------------------------------------------ proximite technique ouvrage */
+
+const facadeExistante = {
+  id: "fac003",
+  nom: "Enduit de façade minéral armé",
+  unite: "m2",
+  motsCles: "enduit facade mineral arme crepi treillis",
+  heures: 0.42,
+  materiel: 4.5,
+  composants: [
+    { materiauId: "mortier", quantite: 8.5 },
+    { materiauId: "treillis", quantite: 1.1 },
+    { materiauId: "primaire", quantite: 0.2 },
+  ],
+};
+
+test("une composition quasi identique donne un score de proximite tres eleve", () => {
+  // Meme exemple que la discussion : un ecart de rendement/matiere minime ne doit
+  // pas suffire a justifier un nouvel ouvrage.
+  const brouillon = {
+    nom: "Enduit extérieur minéral armé avec treillis fibre, ép. 10 mm",
+    unite: "m2",
+    heures: 0.43,
+    materiel: 4.5,
+    composants: [
+      { materiauId: "mortier", quantite: 8.7 },
+      { materiauId: "treillis", quantite: 1.1 },
+      { materiauId: "primaire", quantite: 0.2 },
+    ],
+  };
+  const score = C.ouvrageProximity(brouillon, facadeExistante);
+  assert.ok(score >= 0.85, `score attendu tres eleve, obtenu ${score}`);
+});
+
+test("une composition sensiblement differente donne un score plus bas", () => {
+  const brouillon = {
+    nom: "Enduit extérieur minéral armé avec profilés",
+    unite: "m2",
+    heures: 0.7,
+    materiel: 4.5,
+    composants: [
+      { materiauId: "mortier", quantite: 12 },
+      { materiauId: "treillis", quantite: 2.2 },
+      { materiauId: "profiles", quantite: 1 },
+    ],
+  };
+  const score = C.ouvrageProximity(brouillon, facadeExistante);
+  const scoreProche = C.ouvrageProximity(
+    { ...facadeExistante, heures: 0.43, composants: [{ materiauId: "mortier", quantite: 8.7 }, { materiauId: "treillis", quantite: 1.1 }, { materiauId: "primaire", quantite: 0.2 }] },
+    facadeExistante,
+  );
+  assert.ok(score < scoreProche, "un ecart reel de composition doit se voir dans le score");
+});
+
+test("une unite differente elimine toute proximite, quel que soit le libelle", () => {
+  const brouillon = { nom: "Enduit de façade minéral armé", unite: "m", heures: 0.42, composants: facadeExistante.composants };
+  assert.equal(C.ouvrageProximity(brouillon, facadeExistante), 0);
+});
+
+test("bestOuvrageMatch retient le candidat le plus proche parmi le catalogue", () => {
+  const autre = { id: "other", nom: "Carrelage de sol grès cérame", unite: "m2", composants: [], heures: 0.5, materiel: 5 };
+  const best = C.bestOuvrageMatch(
+    { nom: "Enduit extérieur minéral armé", unite: "m2", heures: 0.42, composants: facadeExistante.composants },
+    [facadeExistante, autre],
+  );
+  assert.equal(best.ouvrage.id, "fac003");
+});
+
+test("bestOuvrageMatch renvoie null s'il n'y a aucun candidat de meme unite", () => {
+  const best = C.bestOuvrageMatch({ nom: "Enduit de façade minéral armé", unite: "pce", heures: 0, composants: [] }, [facadeExistante]);
+  assert.equal(best, null);
+});
+
 /* ------------------------------------------------------------ lecture metre */
 
 // Reproduit la mise en page d'un inventaire avec titres de lot et sous-totaux.
