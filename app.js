@@ -306,7 +306,9 @@
     $("#kpi-materiaux").textContent = state.materiaux.length;
     $("#kpi-k").textContent = C.coefficientK(state.settings).toFixed(3).replace(".", ",");
     $("#kpi-devis").textContent = euro.format(totals.ht);
-    $("#kpi-alertes").textContent = state.metre.analysed.filter((row) => !row.ouvrageId || row.unitWarning).length;
+    $("#kpi-alertes").textContent = state.metre.analysed.filter(
+      (row) => row.unitWarning || (!row.ouvrageId && !row.pourMemoire),
+    ).length;
     $("#kpi-recalage").textContent = recalagesRendement().filter(aRecaler).length + recalagesPrix().filter(aRecaler).length;
     $("#kpi-peremption").textContent = materiauxPerimes().length;
   }
@@ -1020,7 +1022,7 @@
   function actionGroups() {
     const groups = new Map();
     state.metre.analysed
-      .filter((row) => !row.ouvrageId || !row.quantiteOk || row.unitWarning)
+      .filter((row) => row.unitWarning || (!row.pourMemoire && (!row.ouvrageId || !row.quantiteOk)))
       .forEach((row) => {
         const family = C.classifyFamily(row.description);
         const key = `${row.lot}::${family}`;
@@ -1090,14 +1092,27 @@
           .map((row, index) => {
             const prix = metreRowPrice(row);
             const classes = [];
-            if (!row.ouvrageId) classes.push("row-missing");
-            else if (row.unitWarning) classes.push("row-warning");
+            if (row.unitWarning) classes.push("row-warning");
+            else if (row.pourMemoire) {
+              // Statut normal pour ce type de poste, rattache a un ouvrage ou non,
+              // quantite renseignee ou non : pas de mise en evidence rouge/orange.
+            } else if (!row.ouvrageId) classes.push("row-missing");
             else if (!row.quantiteOk) classes.push("row-warning");
             return `<tr class="${classes.join(" ")}">
               <td>${esc(row.numero)}</td>
               <td>${esc(row.description)}</td>
-              <td>${esc(row.unite)}${row.unitWarning ? ' <span class="flag" title="Unité incompatible avec l’ouvrage">!</span>' : ""}</td>
-              <td>${row.quantiteOk ? number.format(row.quantite) : '<span class="flag">?</span>'}</td>
+              <td>${esc(row.unite)}${
+                row.unitWarning
+                  ? ` <button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="unite" aria-label="Détail de l’incompatibilité d’unité">!</button>`
+                  : ""
+              }</td>
+              <td>${
+                row.quantiteOk
+                  ? number.format(row.quantite)
+                  : row.pourMemoire
+                    ? "—"
+                    : `<button type="button" class="flag" data-metre-flag-row="${index}" data-metre-flag-kind="quantite" aria-label="Détail sur la quantité manquante">?</button>`
+              }</td>
               <td><select data-metre-match="${index}"><option value="">— aucun ouvrage —</option>${ouvrageOptionsHtml}</select></td>
               <td>${matchBadge(row)}</td>
               <td>${prix ? euro.format(prix) : "-"}</td>
@@ -1113,6 +1128,11 @@
   }
 
   function matchBadge(row) {
+    // Un poste "pour memoire"/"hors marche" sans ouvrage rattache n'est pas une
+    // anomalie a traiter : c'est le statut normal de ce type de poste.
+    if (row.pourMemoire && !row.ouvrageId && !row.unitWarning) {
+      return `<span class="match memo">pour mémoire</span>`;
+    }
     // row.unitWarning avec un ouvrageId encore renseigne : forme laissee par une
     // session sauvegardee avant le garde-fou sur l'unite. Ne jamais l'afficher comme
     // une correspondance valable, quelle que soit sa confiance mémorisée.
@@ -1181,18 +1201,21 @@
       const unite = String(raw[mapping.unite] ?? "").trim();
       const quantite = C.parseNumber(raw[mapping.quantite]);
       const quantiteOk = Number.isFinite(quantite) && quantite > 0;
-      const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk };
+      // Un poste "pour memoire"/"hors marche" n'a normalement ni quantite ni prix a
+      // chiffrer : ce n'est pas une anomalie a signaler comme les autres.
+      const pourMemoire = C.isPourMemoire(description);
+      const base = { numero, poste: numero, description, unite, quantite: quantiteOk ? quantite : 0, quantiteOk, pourMemoire };
       const match = C.findMatch(base, state.ouvrages, cache);
 
       const label = `Poste ${numero}`;
       if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
-      if (!quantiteOk) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
+      if (!quantiteOk && !pourMemoire) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
       if (!match.ouvrageId && match.unitWarning) {
         alerts.push({
           type: "danger",
           message: `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
         });
-      } else if (!match.ouvrageId) {
+      } else if (!match.ouvrageId && !pourMemoire) {
         alerts.push({ type: "warning", message: `${label} : aucun ouvrage reconnu pour « ${description} ».` });
       } else if (match.unitWarning) {
         // Filet de securite : ne devrait plus se produire (findMatch et le choix manuel
@@ -1236,6 +1259,17 @@
     // Filet de securite : ne jamais memoriser un rapprochement dont l'unite ne
     // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
     if (!ouvrage || !row.numero || row.unitWarning) return;
+    const key = C.normalizeRef(row.numero);
+    // Un code de metre ne doit jamais designer deux ouvrages a la fois : sinon le
+    // prochain chiffrage redevient arbitraire (le premier ouvrage trouve l'emporte).
+    // Un meme numero de poste (ex. "09.04") peut avoir ete appris sur un tout autre
+    // ouvrage lors d'un marche precedent sans rapport.
+    state.ouvrages.forEach((other) => {
+      if (other.id === ouvrage.id) return;
+      if (other.refsMetre.some((ref) => C.normalizeRef(ref) === key)) {
+        other.refsMetre = other.refsMetre.filter((ref) => C.normalizeRef(ref) !== key);
+      }
+    });
     const before = ouvrage.refsMetre.length;
     ouvrage.refsMetre = C.normalizeRefList([ouvrage.refsMetre, row.numero]);
     if (ouvrage.refsMetre.length !== before) {
@@ -1373,7 +1407,15 @@
             utilisable ? C.roundMoney(row.confidence) : "",
             utilisable ? C.roundMoney(priceOf(ouvrage).vente) : "",
             C.roundMoney(metreRowPrice(row)),
-            row.unitWarning ? "Unité incompatible" : !ouvrage ? "Ouvrage manquant" : row.quantiteOk ? "OK" : "Quantité à vérifier",
+            row.unitWarning
+              ? "Unité incompatible"
+              : !ouvrage
+                ? row.pourMemoire
+                  ? "Pour mémoire"
+                  : "Ouvrage manquant"
+                : row.quantiteOk
+                  ? "OK"
+                  : "Quantité à vérifier",
           ];
         }),
       ],
@@ -1773,6 +1815,25 @@
       const hidden = info.hasAttribute("hidden");
       info.toggleAttribute("hidden", !hidden);
       target.setAttribute("aria-expanded", String(hidden));
+      return;
+    }
+    if (data.metreFlagRow !== undefined) {
+      const row = state.metre.analysed[Number(data.metreFlagRow)];
+      if (!row) return;
+      if (data.metreFlagKind === "unite") {
+        const suggestion = ouvrageById(row.suggestionId || row.ouvrageId);
+        notify(
+          suggestion
+            ? `Unité incompatible : le poste « ${row.numero} » est en « ${row.unite || "?"} », l’ouvrage le plus proche (« ${suggestion.nom} ») est en « ${suggestion.unite} ». Une quantité en ${row.unite || "?"} ne peut pas être chiffrée avec un prix au ${suggestion.unite} : choisissez un ouvrage dont l’unité correspond, ou créez-en un nouveau dans la bibliothèque.`
+            : `Unité « ${row.unite || "?"} » du poste « ${row.numero} » incompatible avec l’ouvrage retenu.`,
+          "danger",
+        );
+      } else if (data.metreFlagKind === "quantite") {
+        notify(
+          `Quantité absente ou nulle dans le fichier importé pour le poste « ${row.numero} ». Ce poste ne peut pas être chiffré tant qu’une quantité n’est pas renseignée : corrigez le fichier source (ou obtenez la quantité manquante) puis réimportez-le.`,
+          "danger",
+        );
+      }
       return;
     }
     if (data.mergeFrom && data.mergeTo) return mergeOuvrages(data.mergeFrom, data.mergeTo);

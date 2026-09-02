@@ -169,7 +169,12 @@
     ["09.01", "Prise de courant 2P+T encastrée", "pce", 0.65, [["Blochet d’encastrement", 1], ["Prise 2P+T", 1], ["Câble d’alimentation prise", 1]], 6, "prise prises courant 2pt encastree encastrees electricite"],
     ["09.02", "Mise à la terre et liaisons équipotentielles RGIE", "FF", 7, [["Forfait contrôle et réception", 0.65]], 80, "mise terre liaisons equipotentielles rgie"],
     ["09.03", "Contrôle de conformité par organisme agréé", "FF", 2, [["Forfait contrôle et réception", 1]], 0, "controle conformite organisme agree rgie"],
-    ["09.04", "Mobilier de vestiaire (pour mémoire, hors marché)", "pce", 0, [["Mobilier vestiaire", 1]], 0, "mobilier vestiaire pour memoire hors marche"],
+    // Pas de code de metre pre-enregistre ici : "09.04" n'est qu'un numero de
+    // lot/poste generique, propre au marche d'origine de cet exemple. Un vrai poste
+    // 09.04 d'un autre marche n'a aucune raison de designer ce meme ouvrage "pour
+    // memoire" — un code connu errone ferait disparaitre un poste bien reel derriere
+    // un prix quasi nul, avec une confiance de 100 % qui masque le probleme.
+    ["", "Mobilier de vestiaire (pour mémoire, hors marché)", "pce", 0, [["Mobilier vestiaire", 1]], 0, "mobilier vestiaire pour memoire hors marche"],
   ].map(([ref, nom, unite, heures, composants, materiel, motsCles]) => ({
     ref,
     nom,
@@ -227,7 +232,6 @@
     "09.01": ["6.01"],
     "09.02": ["6.02"],
     "09.03": ["6.03"],
-    "09.04": ["5.08"],
   };
 
   const lotLabels = {
