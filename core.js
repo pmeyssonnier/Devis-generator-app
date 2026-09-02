@@ -660,16 +660,25 @@
   /*
    * Rapproche une ligne de metre d'un ouvrage.
    * 1. code appris sur cette commune (communeCodes) -> certitude, propre au marche
-   * 2. sinon code deja connu (refsMetre du catalogue, partage entre marches) -> certitude
+   * 2. sinon, UNIQUEMENT si aucune commune n'est renseignee pour cet import : code
+   *    deja connu (refsMetre du catalogue, partage entre marches) -> certitude
    * 3. sinon meilleur score parmi les ouvrages d'unite compatible
    * 4. si le meilleur score global a une unite incompatible, on le signale sans le retenir
+   *
+   * communeCodes vaut null/undefined quand aucune commune n'est renseignee (anciens
+   * fichiers, comportement historique) ; un objet (meme vide {}) des qu'une commune
+   * est active. Dans ce second cas, un code absent de communeCodes ne doit JAMAIS
+   * retomber sur le refsMetre global : ce serait appliquer a une commune inconnue la
+   * codification apprise sur un tout autre marche — exactement le risque que le
+   * mapping par commune est cense eliminer.
    */
   function findMatch(row, ouvrages, cache, communeCodes) {
     const codes = [row.poste, row.numero]
       .map(normalizeRef)
       .filter(Boolean);
+    const communeActive = communeCodes !== null && communeCodes !== undefined;
 
-    if (codes.length && communeCodes) {
+    if (codes.length && communeActive) {
       const mappedId = codes.map((code) => communeCodes[code]).find(Boolean);
       const mapped = mappedId ? ouvrages.find((ouvrage) => ouvrage.id === mappedId) : null;
       if (mapped) {
@@ -679,9 +688,9 @@
         }
         return { ouvrageId: mapped.id, confidence: 1, reason: "code connu (commune)", unitWarning: false, suggestionId: "" };
       }
-    }
-
-    if (codes.length) {
+      // Commune active mais code inconnu pour elle : pas de retour au refsMetre
+      // global, on passe directement au rapprochement par libelle plus bas.
+    } else if (codes.length) {
       const byCode = ouvrages.find((ouvrage) =>
         (ouvrage.refsMetre || []).some((ref) => codes.includes(normalizeRef(ref))),
       );
@@ -741,13 +750,26 @@
 
     const textScore = matchScore(payload.nom, ouvrage, null);
 
-    const payloadMateriaux = new Set((payload.composants || []).map((c) => c.materiauId).filter(Boolean));
-    const ouvrageMateriaux = new Set((ouvrage.composants || []).map((c) => c.materiauId).filter(Boolean));
+    // Mêmes matières ne suffit pas : deux ouvrages avec les trois mêmes materiauId
+    // mais des dosages sans rapport (8,5 kg vs 20 kg) ne sont pas le même ouvrage.
+    // Le score combine donc la présence des matières (40 %) et la proximité de leurs
+    // quantités (60 %) — une matière absente d'un des deux côtés compte pour 0 dans
+    // les deux, comme le ferait un indice de Jaccard seul.
+    const payloadMap = new Map((payload.composants || []).filter((c) => c.materiauId).map((c) => [c.materiauId, Number(c.quantite) || 0]));
+    const ouvrageMap = new Map((ouvrage.composants || []).filter((c) => c.materiauId).map((c) => [c.materiauId, Number(c.quantite) || 0]));
     let composantScore = null;
-    if (payloadMateriaux.size || ouvrageMateriaux.size) {
-      const union = new Set([...payloadMateriaux, ...ouvrageMateriaux]);
-      const commun = [...payloadMateriaux].filter((id) => ouvrageMateriaux.has(id)).length;
-      composantScore = union.size ? commun / union.size : 0;
+    if (payloadMap.size || ouvrageMap.size) {
+      const tousIds = new Set([...payloadMap.keys(), ...ouvrageMap.keys()]);
+      const communs = [...payloadMap.keys()].filter((id) => ouvrageMap.has(id));
+      const presenceScore = communs.length / tousIds.size;
+      const quantiteScore =
+        communs.reduce((sum, id) => {
+          const a = payloadMap.get(id);
+          const b = ouvrageMap.get(id);
+          const proximite = a === 0 && b === 0 ? 1 : Math.min(a, b) / Math.max(a, b, 1e-6);
+          return sum + proximite;
+        }, 0) / tousIds.size;
+      composantScore = presenceScore * 0.4 + quantiteScore * 0.6;
     }
 
     const closeness = (a, b) => {
