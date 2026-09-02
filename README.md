@@ -177,12 +177,17 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `manifest.webmanifest`, `icons/` | Icône d'écran d'accueil (téléphone) et nom affiché en dessous |
 | `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
 | `catalog.js` | Catalogue de départ et codifications connues |
-| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture de métré, retour de chantier, péremption des prix |
-| `app.js` | État, rendu, événements, imports/exports |
+| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, retour de chantier, péremption des prix |
+| `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
 
-`core.js` ne touche pas au DOM, ce qui rend la logique de chiffrage testable hors
-navigateur.
+`core.js` ne touche pas au DOM, ce qui rend la logique testable hors navigateur. La
+frontière suit une règle simple : **tout ce qui transforme des données va dans
+`core.js`**, `app.js` ne garde que ce qui lit ou écrit dans la page. Cela vaut aussi
+pour les opérations sur l'état complet — analyse d'un métré (`analyseRows`), migration
+d'une bibliothèque enregistrée par une version antérieure (`normalizeState`),
+mémorisation d'un code (`memoriserCode`), fusion et suppression d'un ouvrage — qui
+vivaient dans `app.js` sans qu'aucun test ne puisse les atteindre.
 
 ## Thème clair / sombre / automatique
 
@@ -206,7 +211,19 @@ node --test test/core.test.js
 ```
 
 Aucune dépendance à installer. Le déploiement sur GitHub Pages exécute cette suite avant
-de publier : un commit qui la casse n'est pas mis en ligne.
+de publier, et elle tourne aussi sur chaque pull request : un commit qui la casse n'est
+ni fusionné ni mis en ligne.
+
+Trois familles de tests couvrent ce qui coûte le plus cher à casser :
+
+- **Calcul et rapprochement** : prix de vente, coefficient K, unités, `findMatch`,
+  lecture d'une grille de métré.
+- **Migration de l'état** : une bibliothèque enregistrée par une version antérieure
+  (ancien couple `materiauId`/`quantiteMateriau`, `referencesMetre`, communes
+  homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
+- **Invariants après remaniement** : après un apprentissage, une fusion ou une
+  suppression d'ouvrage, aucun code de métré ne désigne deux ouvrages et aucune
+  référence ne pointe vers un ouvrage disparu.
 
 ## Sauvegarde
 

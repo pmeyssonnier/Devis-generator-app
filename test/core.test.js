@@ -948,3 +948,330 @@ test("un poste dont le libelle contient « total » ou « report » n'est pas un
   assert.deepEqual(parsed.rows.map((row) => row["N°"]), ["1.01", "1.02"]);
   assert.equal(parsed.skipped, 1, "le sous-total a code numerique est ecarte ET compte ; la ligne sans code est un titre ignore");
 });
+
+/* ------------------------------------------------- migration de l'etat enregistre */
+
+// uid deterministe : les identifiants generes doivent etre reperables dans les tests.
+function uidSequentiel() {
+  let n = 0;
+  return () => `gen-${++n}`;
+}
+
+function normaliser(source, avertissements = []) {
+  return C.normalizeState(source, {
+    catalog: CATALOG,
+    uid: uidSequentiel(),
+    onWarning: (message) => avertissements.push(message),
+  });
+}
+
+test("normalizeState migre une bibliotheque enregistree par une version anterieure", () => {
+  const etat = normaliser({
+    settings: { coutHoraire: 52, tva: 12 },
+    materiaux: [{ id: "m1", nom: "Enduit", unite: "m2", prix: "13,5" }],
+    ouvrages: [
+      // Ancien couple materiauId / quantiteMateriau, et ancien nom de champ pour les refs.
+      { id: "o1", poste: "A01", nom: "03.02 - Enduit de façade", unite: "m2", heures: 0.35, materiauId: "m1", quantiteMateriau: 1, referencesMetre: ["2.05"] },
+      // Sans id : il doit en recevoir un.
+      { poste: "A01", nom: "Peinture", unite: "m2", heures: 0.2 },
+    ],
+    devis: { tva: 0, lignes: [{ ouvrageId: "o1", quantite: "12" }] },
+  });
+
+  assert.equal(etat.ouvrages[0].composants.length, 1, "l'ancien materiau unique devient un composant");
+  assert.deepEqual(etat.ouvrages[0].composants[0], { materiauId: "m1", quantite: 1 });
+  assert.ok(etat.ouvrages[0].refsMetre.includes("2.05"), "referencesMetre est relu comme refsMetre");
+  assert.equal(etat.ouvrages[0].nom, "Enduit de façade", "le code en tete du libelle, suivi d'un separateur, est retire");
+  assert.ok(etat.ouvrages[1].id, "un ouvrage sans id en recoit un");
+  assert.notEqual(etat.ouvrages[1].poste, etat.ouvrages[0].poste, "deux ouvrages ne partagent pas le meme code interne");
+  assert.equal(etat.devis.tva, 0, "0 % est une valeur legitime, pas une absence");
+  assert.equal(etat.devis.lignes[0].quantite, 12);
+  assert.ok(etat.devis.lignes[0].id, "une ligne de devis sans id en recoit un");
+  assert.equal(etat.settings.tva, 21, "une TVA hors 6/21 revient au taux par defaut");
+  assert.equal(etat.settings.coutHoraire, 52, "les reglages saisis sont conserves");
+  assert.equal(etat.materiaux[0].prix, 0, "un prix non numerique ne devient jamais NaN");
+});
+
+test("normalizeState fusionne les communes homonymes et signale les conflits", () => {
+  const avertissements = [];
+  const etat = normaliser(
+    {
+      ouvrages: [
+        { id: "a", nom: "Enduit", unite: "m2" },
+        { id: "b", nom: "Peinture", unite: "m2" },
+      ],
+      mappingCommunes: {
+        Schaerbeek: { "09.04": "a", "09.05": "a" },
+        // Meme commune a la casse pres, avec une correspondance differente pour 09.04
+        // et une autre vers un ouvrage supprime depuis.
+        schaerbeek: { "09.04": "b", "09.06": "disparu" },
+        "  ": { "01.01": "a" },
+      },
+    },
+    avertissements,
+  );
+
+  assert.deepEqual(Object.keys(etat.mappingCommunes), ["Schaerbeek"], "un seul profil, la premiere casse rencontree");
+  assert.equal(etat.mappingCommunes.Schaerbeek["09.04"], "a", "la premiere correspondance est conservee");
+  assert.equal(etat.mappingCommunes.Schaerbeek["09.05"], "a");
+  assert.equal(etat.mappingCommunes.Schaerbeek["09.06"], undefined, "un code vers un ouvrage disparu est ecarte");
+  assert.equal(avertissements.length, 1, "le conflit est signale, pas ecrase en silence");
+  assert.match(avertissements[0], /09\.04/);
+});
+
+test("normalizeState reprend la commune d'une session analysee avant analysedCommune", () => {
+  const avec = normaliser({ metre: { commune: "Ixelles", analysed: [{ numero: "1.01" }] } });
+  assert.equal(avec.metre.analysedCommune, "Ixelles");
+  const sans = normaliser({ metre: { commune: "Ixelles", analysed: [] } });
+  assert.equal(sans.metre.analysedCommune, "", "sans analyse, rien a reprendre");
+  const recent = normaliser({ metre: { commune: "Ixelles", analysedCommune: "", analysed: [{ numero: "1.01" }] } });
+  assert.equal(recent.metre.analysedCommune, "", "une session recente garde sa valeur, meme vide");
+});
+
+test("normalizeState accepte un etat vide sans rien casser", () => {
+  const etat = normaliser({});
+  assert.deepEqual(etat.ouvrages, []);
+  assert.deepEqual(etat.mappingCommunes, {});
+  assert.equal(etat.metre.rows.length, 0);
+  assert.equal(etat.settings.coutHoraire, CATALOG.defaultSettings.coutHoraire);
+});
+
+/* ---------------------------------------------------------- analyse d'un metre */
+
+const GRILLE_METRE = [
+  ["N°", "Désignation", "Unité", "Quantité", "P.U. (€)"],
+  ["1.01", "Enduit de façade minéral sur treillis", "m2", 205, ""],
+  ["1.02", "Mobilier de vestiaire (pour mémoire)", "pce", "", ""],
+  ["1.03", "Peinture murs intérieurs deux couches", "m2", "", ""],
+  ["1.04", "Ouvrage totalement inconnu au bataillon", "m3", 12, ""],
+  ["1.01", "Enduit de façade, reprise", "m2", 30, ""],
+];
+
+const OUVRAGES_METRE = [
+  { id: "enduit", nom: "Enduit de façade minéral armé", unite: "m2", refsMetre: ["03.02"], motsCles: "enduit facade mineral arme treillis" },
+  { id: "peinture", nom: "Peinture murs intérieurs, deux couches", unite: "m2", refsMetre: [], motsCles: "peinture murs interieurs deux couches" },
+];
+
+function analyser(grille, communeCodes) {
+  const parsed = C.rowsFromGrid(grille, "Lot 1");
+  const mapping = {
+    poste: C.findHeader(parsed.headers, C.HEADER_CANDIDATES.poste),
+    description: C.findHeader(parsed.headers, C.HEADER_CANDIDATES.description),
+    unite: C.findHeader(parsed.headers, C.HEADER_CANDIDATES.unite),
+    quantite: C.findHeader(parsed.headers, C.HEADER_CANDIDATES.quantite),
+    prixUnitaire: C.findHeader(parsed.headers, C.HEADER_CANDIDATES.prixUnitaire),
+  };
+  return C.analyseRows(parsed.rows, mapping, OUVRAGES_METRE, communeCodes);
+}
+
+test("analyseRows rapproche, signale et repere les postes pour memoire", () => {
+  const { analysed, alerts } = analyser(GRILLE_METRE, null);
+  const par = (numero) => analysed.filter((row) => row.numero === numero);
+
+  assert.equal(analysed.length, 5);
+  assert.equal(par("1.01")[0].ouvrageId, "enduit", "rapproche par libelle");
+  assert.equal(par("1.02")[0].pourMemoire, true);
+  assert.equal(par("1.02")[0].ouvrageId, "", "aucun ouvrage pour un poste pour memoire");
+  assert.equal(par("1.03")[0].ouvrageId, "peinture");
+  assert.equal(par("1.03")[0].quantiteOk, false, "quantite absente : la ligne n'est pas chiffrable");
+  assert.equal(par("1.04")[0].ouvrageId, "", "aucun ouvrage plausible");
+
+  const messages = alerts.map((alerte) => alerte.message);
+  assert.ok(messages.some((m) => /1\.03.*quantité absente/i.test(m)));
+  assert.ok(messages.some((m) => /1\.04.*aucun ouvrage reconnu/i.test(m)));
+  assert.ok(messages.some((m) => /1\.01.*plusieurs fois/i.test(m)), "un code en double est signale");
+  assert.ok(!messages.some((m) => /1\.02.*quantité absente/i.test(m)), "un poste pour memoire n'a pas a porter de quantite");
+});
+
+test("analyseRows conserve la position de chaque ligne pour l'export", () => {
+  const { analysed } = analyser(GRILLE_METRE, null);
+  assert.equal(analysed[0].rowIndex, 1, "ligne 1 du fichier apres l'en-tete");
+  assert.equal(analysed[0].puCol, 4, "colonne « P.U. (€) »");
+  assert.equal(analysed[0].sheet, "Lot 1");
+  assert.equal(analysed[0].lot, "Lot 1");
+});
+
+test("analyseRows sans colonne N° fabrique un numero, jamais un code", () => {
+  const { analysed } = analyser(
+    [
+      ["Désignation", "Unité", "Quantité"],
+      ["Enduit de façade minéral sur treillis", "m2", 205],
+    ],
+    null,
+  );
+  assert.equal(analysed[0].numero, "1");
+  assert.equal(analysed[0].numeroSynthetique, true);
+});
+
+test("analyseRows applique la table de codes de la commune, sans retour au global", () => {
+  // "1.01" n'est pas dans refsMetre de l'ouvrage peinture : seule la commune le sait.
+  const { analysed } = analyser(GRILLE_METRE, { "1.01": "peinture" });
+  assert.equal(analysed[0].ouvrageId, "peinture");
+  assert.equal(analysed[0].reason, "code connu (commune)");
+
+  // Commune active mais qui ne connait pas encore ce code : on retombe sur le libelle,
+  // jamais sur le refsMetre du catalogue.
+  const vierge = analyser(GRILLE_METRE, {});
+  assert.equal(vierge.analysed[0].ouvrageId, "enduit");
+  assert.equal(vierge.analysed[0].reason, "libellé");
+});
+
+test("metreRowStatus donne un seul etat par ligne", () => {
+  assert.equal(C.metreRowStatus({ unitWarning: true, quantiteOk: true }, true), "unite-incompatible");
+  assert.equal(C.metreRowStatus({ quantiteOk: true }, false), "ouvrage-manquant");
+  assert.equal(C.metreRowStatus({ quantiteOk: true, pourMemoire: true }, false), "pour-memoire");
+  assert.equal(C.metreRowStatus({ quantiteOk: false, pourMemoire: true }, true), "pour-memoire");
+  assert.equal(C.metreRowStatus({ quantiteOk: false }, true), "quantite-manquante");
+  assert.equal(C.metreRowStatus({ quantiteOk: true }, true), "ok");
+  // Chaque etat a un libelle pour l'export : aucune case vide dans la colonne Statut.
+  ["unite-incompatible", "ouvrage-manquant", "pour-memoire", "quantite-manquante", "ok"].forEach((cle) => {
+    assert.ok(C.METRE_STATUS_LABELS[cle], `libelle manquant pour ${cle}`);
+  });
+});
+
+/* --------------------------------- invariants apres apprentissage et remaniements */
+
+function etatDeTravail() {
+  return C.normalizeState(
+    {
+      ouvrages: [
+        { id: "enduit", nom: "Enduit de façade", unite: "m2", refsMetre: ["03.02"] },
+        { id: "peinture", nom: "Peinture de façade", unite: "m2", refsMetre: ["03.03"] },
+      ],
+      devis: { lignes: [{ id: "l1", ouvrageId: "enduit", quantite: 10 }] },
+      chantiers: [
+        { id: "c1", nom: "Chantier", mainOeuvre: [{ id: "r1", ouvrageId: "enduit", quantite: 5, personnes: 1, duree: 2 }], achats: [] },
+      ],
+      metre: {
+        commune: "",
+        analysedCommune: "",
+        analysed: [
+          { numero: "2.05", poste: "2.05", ouvrageId: "enduit", suggestionId: "", unitWarning: false, quantiteOk: true },
+          { numero: "2.06", poste: "2.06", ouvrageId: "", suggestionId: "enduit", unitWarning: false, quantiteOk: true },
+        ],
+      },
+    },
+    { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} },
+  );
+}
+
+// Un code de metre ne doit designer qu'un seul ouvrage : sinon le prochain chiffrage
+// redevient arbitraire, le premier ouvrage trouve l'emportant.
+function codesEnDouble(etat) {
+  const porteurs = new Map();
+  etat.ouvrages.forEach((ouvrage) => {
+    (ouvrage.refsMetre || []).forEach((ref) => {
+      const cle = C.normalizeRef(ref);
+      porteurs.set(cle, (porteurs.get(cle) || []).concat(ouvrage.id));
+    });
+  });
+  return [...porteurs.entries()].filter(([, ids]) => ids.length > 1);
+}
+
+function referencesOrphelines(etat) {
+  const ids = new Set(etat.ouvrages.map((ouvrage) => ouvrage.id));
+  const orphelines = [];
+  Object.entries(etat.mappingCommunes).forEach(([commune, codes]) => {
+    Object.entries(codes).forEach(([code, id]) => {
+      if (!ids.has(id)) orphelines.push(`mappingCommunes/${commune}/${code}`);
+    });
+  });
+  etat.metre.analysed.forEach((row) => {
+    if (row.ouvrageId && !ids.has(row.ouvrageId)) orphelines.push(`metre/${row.numero}/ouvrageId`);
+    if (row.suggestionId && !ids.has(row.suggestionId)) orphelines.push(`metre/${row.numero}/suggestionId`);
+  });
+  return orphelines;
+}
+
+test("memoriser un code le retire de l'ouvrage qui le portait", () => {
+  const etat = etatDeTravail();
+  etat.ouvrages[0].refsMetre = C.normalizeRefList([etat.ouvrages[0].refsMetre, "2.05"]);
+
+  C.memoriserCode(etat, { numero: "2.05", ouvrageId: "peinture", unitWarning: false });
+
+  const enduit = etat.ouvrages.find((o) => o.id === "enduit");
+  const peinture = etat.ouvrages.find((o) => o.id === "peinture");
+  assert.ok(!enduit.refsMetre.some((ref) => C.normalizeRef(ref) === "2.05"), "l'ancien porteur perd le code");
+  assert.ok(peinture.refsMetre.some((ref) => C.normalizeRef(ref) === "2.05"), "le nouveau le recoit");
+  assert.deepEqual(codesEnDouble(etat), [], "aucun code sur deux ouvrages");
+});
+
+test("avec une commune, le code est appris pour elle seule et jamais en global", () => {
+  const etat = etatDeTravail();
+  etat.metre.analysedCommune = "Ixelles";
+
+  C.memoriserCode(etat, { numero: "2.05", ouvrageId: "peinture", unitWarning: false });
+
+  assert.equal(etat.mappingCommunes.Ixelles["2.05"], "peinture");
+  assert.ok(
+    !etat.ouvrages.some((o) => (o.refsMetre || []).some((ref) => C.normalizeRef(ref) === "2.05")),
+    "le refsMetre global, partage entre marches, n'est pas touche",
+  );
+  // La casse d'une commune deja connue est reutilisee, pas dupliquee.
+  etat.metre.analysedCommune = "IXELLES";
+  C.memoriserCode(etat, { numero: "2.07", ouvrageId: "enduit", unitWarning: false });
+  assert.deepEqual(Object.keys(etat.mappingCommunes), ["Ixelles"]);
+  assert.equal(etat.mappingCommunes.Ixelles["2.07"], "enduit");
+});
+
+test("memoriserCode refuse une unite incompatible et un numero fabrique", () => {
+  const etat = etatDeTravail();
+  assert.equal(C.memoriserCode(etat, { numero: "2.09", ouvrageId: "enduit", unitWarning: true }), false);
+  assert.equal(C.memoriserCode(etat, { numero: "3", ouvrageId: "enduit", numeroSynthetique: true }), false);
+  assert.equal(C.memoriserCode(etat, { numero: "2.09", ouvrageId: "inexistant" }), false);
+  assert.ok(!etat.ouvrages.some((o) => o.refsMetre.some((ref) => C.normalizeRef(ref) === "2.09")));
+});
+
+test("fusionner deux ouvrages transfere tout ce qui designait le disparu", () => {
+  const etat = etatDeTravail();
+  etat.metre.analysedCommune = "Ixelles";
+  C.memoriserCode(etat, { numero: "2.05", ouvrageId: "enduit", unitWarning: false });
+
+  assert.equal(C.fusionnerOuvrages(etat, "enduit", "peinture"), true);
+
+  const peinture = etat.ouvrages.find((o) => o.id === "peinture");
+  assert.equal(etat.ouvrages.length, 1, "l'ouvrage source disparait");
+  assert.ok(peinture.refsMetre.includes("03.02"), "les codes du disparu sont repris");
+  assert.equal(etat.mappingCommunes.Ixelles["2.05"], "peinture");
+  assert.equal(etat.devis.lignes[0].ouvrageId, "peinture");
+  assert.equal(etat.chantiers[0].mainOeuvre[0].ouvrageId, "peinture", "sans ce transfert, l'historique ne recale plus rien");
+  assert.equal(etat.metre.analysed[0].ouvrageId, "peinture");
+  assert.equal(etat.metre.analysed[1].suggestionId, "peinture");
+  assert.deepEqual(referencesOrphelines(etat), []);
+  assert.deepEqual(codesEnDouble(etat), []);
+});
+
+test("fusionner refuse un ouvrage inconnu ou lui-meme", () => {
+  const etat = etatDeTravail();
+  assert.equal(C.fusionnerOuvrages(etat, "enduit", "enduit"), false);
+  assert.equal(C.fusionnerOuvrages(etat, "inexistant", "peinture"), false);
+  assert.equal(etat.ouvrages.length, 2);
+});
+
+test("supprimer un ouvrage ne laisse aucune reference pendante", () => {
+  const etat = etatDeTravail();
+  etat.metre.analysedCommune = "Ixelles";
+  C.memoriserCode(etat, { numero: "2.05", ouvrageId: "enduit", unitWarning: false });
+
+  C.supprimerOuvrage(etat, "enduit");
+
+  assert.equal(etat.ouvrages.length, 1);
+  assert.equal(etat.mappingCommunes.Ixelles["2.05"], undefined, "le code appris part avec l'ouvrage");
+  assert.equal(etat.metre.analysed[0].ouvrageId, "");
+  assert.equal(etat.metre.analysed[1].suggestionId, "", "meme une simple suggestion ne survit pas");
+  assert.deepEqual(referencesOrphelines(etat), []);
+  // Devis et chantiers gardent volontairement la reference : ils s'affichent
+  // « ouvrage supprimé » plutot que de disparaitre d'un historique.
+  assert.equal(etat.devis.lignes[0].ouvrageId, "enduit");
+  assert.equal(etat.chantiers[0].mainOeuvre[0].ouvrageId, "enduit");
+});
+
+test("une migration relit un etat remanie sans laisser de reference morte", () => {
+  const etat = etatDeTravail();
+  etat.metre.analysedCommune = "Ixelles";
+  C.memoriserCode(etat, { numero: "2.05", ouvrageId: "enduit", unitWarning: false });
+  C.supprimerOuvrage(etat, "enduit");
+  const relu = C.normalizeState(etat, { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  assert.deepEqual(referencesOrphelines(relu), []);
+  assert.deepEqual(codesEnDouble(relu), []);
+});
