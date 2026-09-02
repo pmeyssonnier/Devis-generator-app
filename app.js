@@ -1236,6 +1236,17 @@
     // Filet de securite : ne jamais memoriser un rapprochement dont l'unite ne
     // correspond pas, meme si l'appelant a laisse passer ouvrageId par erreur.
     if (!ouvrage || !row.numero || row.unitWarning) return;
+    const key = C.normalizeRef(row.numero);
+    // Un code de metre ne doit jamais designer deux ouvrages a la fois : sinon le
+    // prochain chiffrage redevient arbitraire (le premier ouvrage trouve l'emporte).
+    // Un meme numero de poste (ex. "09.04") peut avoir ete appris sur un tout autre
+    // ouvrage lors d'un marche precedent sans rapport.
+    state.ouvrages.forEach((other) => {
+      if (other.id === ouvrage.id) return;
+      if (other.refsMetre.some((ref) => C.normalizeRef(ref) === key)) {
+        other.refsMetre = other.refsMetre.filter((ref) => C.normalizeRef(ref) !== key);
+      }
+    });
     const before = ouvrage.refsMetre.length;
     ouvrage.refsMetre = C.normalizeRefList([ouvrage.refsMetre, row.numero]);
     if (ouvrage.refsMetre.length !== before) {

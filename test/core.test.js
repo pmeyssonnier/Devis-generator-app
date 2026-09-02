@@ -635,3 +635,15 @@ test("chaque ouvrage du catalogue est effectivement installe", () => {
   const noms = CATALOG.ouvrages.map((ouvrage) => C.normalizeText(ouvrage.nom));
   assert.equal(new Set(noms).size, noms.length, "pas de libellé en double");
 });
+
+test("un ouvrage \"pour memoire\" du catalogue ne pre-enregistre aucun code de metre", () => {
+  // Un code de metre comme "09.04" n'est qu'un numero de lot/poste propre au marche
+  // d'origine : le reutiliser comme code connu pour un ouvrage "pour memoire, hors
+  // marche" (prix quasi nul) ferait disparaitre, avec une confiance de 100 %, un
+  // poste bien reel d'un tout autre marche qui reutilise coincidemment ce numero.
+  const pourMemoire = CATALOG.ouvrages.filter((ouvrage) => /pour mémoire|hors marché/i.test(ouvrage.nom));
+  assert.ok(pourMemoire.length > 0, "cet exemple doit toujours exister dans le catalogue");
+  pourMemoire.forEach((ouvrage) => {
+    assert.equal(ouvrage.ref, "", `${ouvrage.nom} ne doit avoir aucun code de metre pre-enregistre`);
+  });
+});
