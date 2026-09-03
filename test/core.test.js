@@ -1742,3 +1742,101 @@ test("un export relu par normalizeState reste un état complet", () => {
   assert.equal(Array.isArray(relu.ouvrages), true);
   assert.equal(Array.isArray(relu.devisList), true);
 });
+
+/* -------------------------------------------- familles et recettes techniques */
+
+test("les mots génériques ne volent pas les postes des autres familles", () => {
+  // « toiture », « joint » et « mastic » sont des indices, pas des mots distinctifs :
+  // ajoutés tels quels à Étanchéité, qui précède Isolation, Chape et Menuiserie dans
+  // la liste, ils auraient capturé tout ce qui les contient.
+  assert.equal(C.classifyFamily("Isolation thermique de la toiture plate, PIR 120 mm"), "Isolation");
+  assert.equal(C.classifyFamily("Mastic silicone en périphérie des châssis"), "Menuiserie");
+  assert.equal(C.classifyFamily("Joints de carrelage au mortier"), "Chape / revêtement sol");
+  assert.equal(C.classifyFamily("Carrelage de sol grès cérame"), "Chape / revêtement sol");
+});
+
+test("un poste d'étanchéité sans mot distinctif retombe sur les indices", () => {
+  assert.equal(C.classifyFamily("Remise en état des joints de dilatation en toiture terrasse"), "Étanchéité");
+  assert.equal(C.classifyFamily("Réfection des joints de toiture"), "Étanchéité");
+  assert.equal(C.classifyFamily("Fourniture et pose de fond de joint mousse"), "Étanchéité");
+  assert.equal(C.classifyFamily("Traitement des infiltrations en sous-sol"), "Étanchéité");
+});
+
+test("aucun ouvrage du catalogue ne change de famille", () => {
+  // Le classement des ouvrages livrés est un acquis : élargir une famille ne doit
+  // jamais en déplacer un au passage.
+  const attendu = {
+    "Étanchéité bitumineuse bicouche": "Étanchéité",
+    "Étanchéité EPDM collée": "Étanchéité",
+    "Étanchéité liquide sous carrelage": "Étanchéité",
+    "Enduit de façade sur maçonnerie": "Façade",
+    "Isolation toiture plate PIR": "Isolation",
+  };
+  Object.entries(attendu).forEach(([nom, famille]) => {
+    const ouvrage = CATALOG.ouvrages.find((item) => item.nom === nom);
+    if (ouvrage) assert.equal(C.classifyFamily(ouvrage.nom), famille, nom);
+  });
+  // Et le catalogue entier reste classable sans exception.
+  CATALOG.ouvrages.forEach((ouvrage) => assert.equal(typeof C.classifyFamily(ouvrage.nom), "string"));
+});
+
+test("une recette ne se propose que sur un poste qu'elle décrit vraiment", () => {
+  const trouver = (texte, unite) => {
+    const recette = C.recettePourPoste(texte, unite, CATALOG.recettes);
+    return recette ? recette.id : null;
+  };
+  assert.equal(trouver("Remise en état des joints de dilatation en toiture terrasse", "m"), "eta-joint-dilatation-toiture");
+  assert.equal(trouver("Solin, relevé et couvre-mur en zinc", "m"), "eta-solin-couvre-mur");
+  assert.equal(trouver("Joint souple élastique en façade", "m"), "eta-joint-facade-mastic");
+  // « parmi » non satisfait : un joint de dilatation de chape n'est pas celui de la recette.
+  assert.equal(trouver("Joints de dilatation dans la chape", "m"), null);
+  // Unité incompatible : une recette au mètre ne chiffre pas un poste au m².
+  assert.equal(trouver("Remise en état des joints de dilatation en toiture terrasse", "m2"), null);
+  assert.equal(trouver("Carrelage de sol grès cérame", "m2"), null);
+  assert.equal(trouver("", "m"), null);
+});
+
+test("entre deux recettes possibles, la plus exigeante l'emporte", () => {
+  // « joint + dilatation + toiture » décrit mieux que « joint + façade ».
+  const recette = C.recettePourPoste("Joint de dilatation en façade et en toiture", "m", CATALOG.recettes);
+  assert.equal(recette.id, "eta-joint-dilatation-toiture");
+});
+
+test("preparerRecette sépare les composants connus des matériaux à créer", () => {
+  const recette = C.recettePourPoste("Solin, relevé et couvre-mur en zinc", "m", CATALOG.recettes);
+  const materiaux = [{ id: "mat-1", nom: "Zinc pour solin et couvre-mur", unite: "m", prix: 21 }];
+  const brouillon = C.preparerRecette(recette, materiaux);
+  assert.deepEqual(brouillon.composants, [{ materiauId: "mat-1", quantite: 1.1 }]);
+  assert.equal(brouillon.manquants.length, 2, "les deux autres doivent être signalés, pas tus");
+  assert.deepEqual(
+    brouillon.manquants.map((manquant) => manquant.nom),
+    ["Bande d'étanchéité de relevé", "Mastic polyuréthane, cartouche 600 ml"],
+  );
+  assert.equal(brouillon.manquants[0].prix > 0, true, "un prix indicatif accompagne chaque manquant");
+  assert.equal(brouillon.heures, recette.heures);
+  assert.equal(brouillon.unite, "m");
+  assert.equal(C.preparerRecette(null, materiaux), null);
+});
+
+test("une recette dont aucun matériau n'existe ne rend aucun composant silencieux", () => {
+  // Le pire cas : un ouvrage complet en apparence, sans matière, donc sous-chiffré.
+  const recette = C.recettePourPoste("Remise en état des joints de dilatation en toiture", "m", CATALOG.recettes);
+  const brouillon = C.preparerRecette(recette, []);
+  assert.equal(brouillon.composants.length, 0);
+  assert.equal(brouillon.manquants.length, recette.composants.length);
+});
+
+test("chaque recette du catalogue est utilisable telle quelle", () => {
+  CATALOG.recettes.forEach((recette) => {
+    assert.ok(recette.id && recette.nom && recette.unite, `${recette.id} : identité complète`);
+    assert.ok(Array.isArray(recette.exige) && recette.exige.length, `${recette.id} : au moins un mot exigé`);
+    assert.ok(recette.heures > 0, `${recette.id} : rendement renseigné`);
+    assert.ok(recette.composants.length > 0, `${recette.id} : au moins un composant`);
+    recette.composants.forEach((composant) => {
+      assert.ok(composant.materiau && composant.unite, `${recette.id} : composant nommé et unité`);
+      assert.ok(composant.quantite > 0 && composant.prixIndicatif > 0, `${recette.id} : quantité et prix indicatif`);
+    });
+    // Une recette doit se reconnaître elle-même sur son propre libellé.
+    assert.equal(C.recettePourPoste(recette.nom, recette.unite, CATALOG.recettes)?.id, recette.id, recette.id);
+  });
+});

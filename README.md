@@ -120,7 +120,9 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    signale et propose de le réutiliser plutôt que de créer un quasi-doublon. Le poste
    ainsi mis en attente est retenu avec le métré auquel il appartient : importer un
    autre marché entre-temps annule le rattachement et le dit, au lieu de l'appliquer
-   au poste qui occupe le même rang dans le nouveau fichier.
+   au poste qui occupe le même rang dans le nouveau fichier. Si le libellé décrit un ouvrage
+   courant du métier, une **recette technique** est proposée avant la saisie (voir plus
+   bas).
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, fusions de cellules, largeurs de colonnes, sous-totaux
    et récapitulatif sont conservés — le pouvoir adjudicateur récupère son propre
@@ -214,6 +216,57 @@ Une bibliothèque enregistrée avant ce changement voit ses lignes figées au pr
 d'aujourd'hui à la première ouverture — c'est la seule valeur dont on dispose — et ses
 devis repartent en brouillon.
 
+## Recettes techniques : ce que l'application propose pour un poste inconnu
+
+Un poste de métré passe par cette chaîne, du plus sûr au plus supposé :
+
+```
+POSTE INCONNU
+  ↓  code déjà appris pour CETTE commune ?          → rattachement certain
+  ↓  ouvrage techniquement proche dans la biblio ?  → proposition de réutilisation
+  ↓  famille métier reconnue ?                      → code interne (ETA.007, MAC.012…)
+  ↓  recette technique connue ?                     → composition proposée
+  ↓  saisie à la main
+```
+
+La **recette technique** est le dernier maillon avant la saisie. Elle décrit la
+composition typique d'un ouvrage courant : ses matériaux, leurs quantités par unité, le
+rendement et le matériel. Sur « Remise en état des joints de dilatation en toiture
+terrasse », l'application propose fond de joint, mastic et primaire, 0,45 h/m, et crée
+les matériaux qui manquent à votre bibliothèque.
+
+**Rien n'est enregistré sans vous.** La proposition s'affiche en entier — composants,
+quantités, rendement, et la note technique qui dit ce que la recette couvre et ce
+qu'elle ne couvre pas. Vous choisissez « Préremplir le formulaire » ou « Saisir
+moi-même », puis vous corrigez avant d'enregistrer.
+
+**Les valeurs sont indicatives, et l'application le dit à chaque fois.** Elles viennent
+de l'usage courant du métier, pas de vos prix ni de vos rendements. Les matériaux créés
+par une recette le sont **sans date de prix** : ils apparaissent donc comme « prix non
+daté » sur leur fiche tant que vous ne les avez pas confirmés. Le retour de chantier
+fait ensuite son travail habituel de recalage.
+
+Une recette ne se déclenche que si elle décrit vraiment le poste : tous ses mots
+obligatoires présents, au moins un mot de contexte, et une unité compatible. « Joints de
+dilatation dans la chape » ne déclenche pas la recette de toiture, et un poste au m² ne
+déclenche pas une recette au mètre. Une recette qui se propose à tort coûte plus cher
+qu'une recette qui ne se propose pas : elle ferait entrer dans la bibliothèque un ouvrage
+plausible mais faux, que plus rien ne distinguerait ensuite.
+
+Les recettes livrées vivent dans `catalog.js` et couvrent aujourd'hui l'étanchéité
+(joint de dilatation en toiture, solin et couvre-mur, joint souple en façade). La liste
+est faite pour grandir.
+
+### Familles métier
+
+Le classement en familles sert au code interne et au regroupement des postes à traiter.
+Il fonctionne à deux niveaux, et c'est ce qui permet d'élargir une famille sans lui
+faire voler les postes des autres : des mots **distinctifs**, qui ne désignent qu'un
+seul métier (`etancheite`, `epdm`, `dilatation`), puis des mots de **contexte**
+(`joint`, `toiture`, `mastic`) consultés seulement si aucun mot distinctif n'a répondu.
+Sans cette distinction, « toiture » ajouté à l'étanchéité aurait capturé « Isolation de
+la toiture plate », et « joint » aurait capturé « Joints de carrelage ».
+
 ## Corriger la bibliothèque avec les chantiers réalisés
 
 Un devis repose sur des rendements estimés. La vue **Chantiers** sert à les confronter
@@ -265,7 +318,7 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `manifest.webmanifest`, `icons/` | Icône d'écran d'accueil (téléphone) et nom affiché en dessous |
 | `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
 | `db.js` | IndexedDB : classeur reçu et historique des métrés chiffrés |
-| `catalog.js` | Catalogue de départ et codifications connues |
+| `catalog.js` | Catalogue de départ, codifications connues et recettes techniques |
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, gel des prix d'un devis, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
@@ -290,7 +343,9 @@ que l'application est ouverte. Un choix explicite est mémorisé dans une clé d
 
 ## Version
 
-Le numéro affiché en bas de la barre latérale suit `package.json`. L'application
+Le numéro affiché en haut à droite de l'écran suit `package.json`. Il était auparavant
+en pied de barre latérale, où il disparaissait sur téléphone — celle-ci devenant la
+barre de navigation du bas. L'application
 n'ayant pas d'outil de build, les deux sont à mettre à jour à la main ensemble
 (`APP_VERSION` dans `app.js`) — utile surtout pour confirmer, une fois déployée sur
 GitHub Pages, que le navigateur affiche bien la dernière version.

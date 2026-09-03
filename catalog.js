@@ -247,6 +247,78 @@
     "09": "LOT 09 — Électricité et conformité",
   };
 
+
+  /*
+   * Recettes techniques : la composition typique d'un ouvrage courant, proposée quand
+   * un poste de métré n'a été reconnu ni par un code communal, ni par un ouvrage
+   * proche. C'est le dernier maillon avant la saisie à la main.
+   *
+   * Ce sont des POINTS DE DÉPART À VALIDER, pas des références. Les rendements et les
+   * prix indicatifs viennent de l'usage courant du métier, pas d'un relevé chez un
+   * fournisseur : l'application le dit à chaque proposition, et l'entrepreneur corrige
+   * avant d'enregistrer. Le retour de chantier fera ensuite son travail habituel.
+   *
+   * exige : tous ces mots doivent être présents dans le libellé du poste.
+   * parmi : au moins un, quand la liste n'est pas vide — c'est ce qui distingue un
+   *         joint de dilatation EN TOITURE d'un joint de dilatation dans une chape.
+   */
+  const recettes = [
+    {
+      id: "eta-joint-dilatation-toiture",
+      nom: "Remise en état de joint de dilatation en toiture",
+      unite: "m",
+      exige: ["joint", "dilatation"],
+      parmi: ["toiture", "terrasse", "acrotere", "etancheite"],
+      heures: 0.45,
+      materiel: 1.5,
+      motsCles: "joint dilatation toiture terrasse etancheite mastic fond de joint",
+      note:
+        "Rendement pour un joint de 20 à 30 mm : dégarnissage, nettoyage, primaire, " +
+        "fond de joint et mastic. Au-delà de 40 mm ou avec couvre-joint métallique, " +
+        "comptez davantage et ajoutez la fourniture correspondante.",
+      composants: [
+        { materiau: "Fond de joint mousse", unite: "m", quantite: 1.05, prixIndicatif: 0.9 },
+        { materiau: "Mastic polyuréthane, cartouche 600 ml", unite: "pce", quantite: 0.35, prixIndicatif: 9.5 },
+        { materiau: "Primaire d'accrochage pour joint", unite: "m", quantite: 1, prixIndicatif: 0.6 },
+      ],
+    },
+    {
+      id: "eta-solin-couvre-mur",
+      nom: "Solin, relevé et couvre-mur",
+      unite: "m",
+      exige: ["solin"],
+      parmi: [],
+      heures: 0.6,
+      materiel: 2,
+      motsCles: "solin releve couvre mur etancheite zinc",
+      note:
+        "Dépose de l'ancien solin, engravure, relevé et couvre-mur. La fourniture est " +
+        "chiffrée en zinc : en aluminium laqué ou en inox, corrigez le prix matière.",
+      composants: [
+        { materiau: "Zinc pour solin et couvre-mur", unite: "m", quantite: 1.1, prixIndicatif: 22 },
+        { materiau: "Bande d'étanchéité de relevé", unite: "m", quantite: 1.05, prixIndicatif: 7.5 },
+        { materiau: "Mastic polyuréthane, cartouche 600 ml", unite: "pce", quantite: 0.2, prixIndicatif: 9.5 },
+      ],
+    },
+    {
+      id: "eta-joint-facade-mastic",
+      nom: "Réfection de joint souple en façade",
+      unite: "m",
+      exige: ["joint"],
+      parmi: ["facade", "mastic", "souple", "elastique"],
+      heures: 0.3,
+      materiel: 0.8,
+      motsCles: "joint souple facade mastic elastique fond de joint",
+      note:
+        "Dégarnissage, fond de joint et mastic élastique. Ne couvre pas le " +
+        "rejointoiement d'une maçonnerie au mortier, qui est un autre ouvrage.",
+      composants: [
+        { materiau: "Fond de joint mousse", unite: "m", quantite: 1.05, prixIndicatif: 0.9 },
+        { materiau: "Mastic polyuréthane, cartouche 600 ml", unite: "pce", quantite: 0.25, prixIndicatif: 9.5 },
+      ],
+    },
+  ];
+
   root.DGCatalog = {
     defaultSettings,
     defaultEntrepreneur,
@@ -254,6 +326,7 @@
     materiaux,
     ouvrages,
     referencesConnues,
+    recettes,
     lotLabels,
   };
 })(globalThis);
