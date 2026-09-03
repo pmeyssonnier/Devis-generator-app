@@ -168,6 +168,19 @@ Avant de pousser un changement d'interface, vérifier que le détecteur Impeccab
 régresse pas. Deux constats connus et assumés y restent ouverts : la police Inter (voir
 la section Design du README) et deux faux positifs `cramped-padding`.
 
+## Trois listes à tenir à la main
+
+Sans outil de build, trois endroits ne se mettent pas à jour tout seuls. Les oublier ne
+casse rien à l'exécution locale — c'est ce qui les rend faciles à manquer.
+
+1. **`APP_SHELL` dans `sw.js`.** Ajouter un fichier à l'application sans l'y déclarer le
+   rend indisponible hors connexion. Et **bump `CACHE_NAME`** quand la liste change,
+   sinon les visiteurs gardent l'ancien cache.
+2. **Le `rm -rf` du job `deploy`** (`.github/workflows/deploy-pages.yml`). Un nouveau
+   dossier d'outillage doit y être ajouté ; un fichier de l'application ne doit surtout
+   pas s'y retrouver, il disparaîtrait du site publié sans que rien n'échoue.
+3. **Le numéro de version**, ci-dessous.
+
 ## Version et déploiement
 
 Le numéro vit **à deux endroits à tenir à jour ensemble à la main** : `version` dans
@@ -188,5 +201,10 @@ l'outillage de développement de la copie qu'il publie, jamais du dépôt.
   la ligne — en particulier les garde-fous, qui sans cela se font « simplifier ».
 - Les corrections de bug s'accompagnent d'un test qui échoue sans elles ; vérifier que le
   test sait échouer avant de le considérer comme une preuve.
+- Une décision qui demande de lire un tableau passe par `askDialog`, jamais par
+  `window.confirm` : le dialogue natif d'Android tronque le texte, sans colonnes ni
+  alignement. `askDialog` se replie sur `window.confirm` si `<dialog>` manque.
+- Les métrés réels servant de jeu d'essai local sont ignorés par git (`METRE_*.xlsx`) :
+  ce sont des documents de marchés, ils ne sont pas publiés.
 - Ne jamais faire disparaître une donnée silencieusement : archiver, signaler, ou refuser
   en le disant. Plusieurs bugs corrigés dans ce dépôt étaient des pertes silencieuses.
