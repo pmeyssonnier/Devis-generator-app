@@ -106,7 +106,10 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    différents. Pour un poste non reconnu, **« Créer un ouvrage à partir de ce poste »**
    pré-remplit le formulaire (libellé, unité) — avant l'enregistrement, si un ouvrage
    techniquement proche existe déjà (libellé, matériaux, rendement, matériel), l'app le
-   signale et propose de le réutiliser plutôt que de créer un quasi-doublon.
+   signale et propose de le réutiliser plutôt que de créer un quasi-doublon. Le poste
+   ainsi mis en attente est retenu avec le métré auquel il appartient : importer un
+   autre marché entre-temps annule le rattachement et le dit, au lieu de l'appliquer
+   au poste qui occupe le même rang dans le nouveau fichier.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, fusions de cellules, largeurs de colonnes, sous-totaux
    et récapitulatif sont conservés — le pouvoir adjudicateur récupère son propre

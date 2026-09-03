@@ -48,7 +48,8 @@
   let editingOuvrageId = "";
   // Index dans state.metre.analysed a rattacher a l'ouvrage sauvegarde, quand le
   // formulaire a ete ouvert depuis "Créer un ouvrage à partir de ce poste". -1 sinon.
-  let creatingOuvrageForMetreRow = -1;
+  // { metreId, rowIndex, numero } et non un simple index : voir resoudrePosteEnAttente.
+  let posteEnAttente = null;
   let editingDevisMeta = false;
   let editingDevisLineId = "";
   let editingChantierId = "";
@@ -1566,14 +1567,16 @@
   // Rattache le poste de metre a l'origine de "Créer un ouvrage à partir de ce poste"
   // a l'ouvrage effectivement sauvegarde (nouveau, modifie, ou existant reutilise).
   // Retourne { status, row } : "aucun" (pas de poste en attente ou poste disparu),
+  // "autreMetre" / "autrePoste" (le poste vise n'est plus celui d'origine),
   // "unite" (rattachement refuse : unites incompatibles) ou "ok". L'appelant
   // s'en sert pour dire la verite dans le toast — un poste promis "rattache
   // automatiquement" qui ne l'est pas doit etre signale, pas passe sous silence.
   function linkCreatedOuvrageToMetreRow(ouvrageId) {
-    if (creatingOuvrageForMetreRow < 0) return { status: "aucun", row: null };
-    const row = state.metre.analysed[creatingOuvrageForMetreRow];
-    creatingOuvrageForMetreRow = -1;
-    if (!row) return { status: "aucun", row: null };
+    const attente = posteEnAttente;
+    posteEnAttente = null;
+    const cible = C.resoudrePosteEnAttente(attente, state.metre);
+    if (cible.status !== "ok") return { status: cible.status, row: null, numero: cible.numero || "" };
+    const row = cible.row;
     const ouvrage = ouvrageById(ouvrageId);
     if (!ouvrage) return { status: "aucun", row };
     if (!C.unitsCompatible(ouvrage.unite, row.unite, row.quantite)) return { status: "unite", row, ouvrage };
@@ -1591,6 +1594,15 @@
     row.suggestionId = "";
     row.unitWarning = false;
     learnMatch(row);
+  }
+
+  // « Rattaché automatiquement » a ete promis a l'utilisateur : si le poste vise
+  // n'existe plus dans le metre affiche, il faut le dire, pas rattacher au hasard.
+  function messageRattachementPerdu(lien) {
+    const poste = lien.numero ? `« ${lien.numero} » ` : "";
+    return lien.status === "autreMetre"
+      ? `le poste ${poste}appartenait à un autre métré : rattachement annulé.`
+      : `le poste ${poste}n’est plus au même rang dans le métré : rattachement annulé.`;
   }
 
   function messageRattachementUnite(lien) {
@@ -1652,7 +1664,6 @@
     state.metre.fige = true;
     sourceArrayBuffer = archive.source || null;
     sourceFileName = sourceArrayBuffer ? archive.fileName || "" : "";
-    creatingOuvrageForMetreRow = -1;
     await DGStore.saveSource(state.metre.id, sourceFileName, sourceArrayBuffer);
     populateFieldMap(Object.keys(state.metre.rows[0] || {}));
     appliquerMappingAuxSelects();
@@ -2030,6 +2041,8 @@
           render();
           if (lien.status === "unite") {
             notify(`Ouvrage existant conservé : « ${match.ouvrage.nom} ». ${messageRattachementUnite(lien)}`, "danger");
+          } else if (lien.status === "autreMetre" || lien.status === "autrePoste") {
+            notify(`Ouvrage existant conservé : « ${match.ouvrage.nom} », mais ${messageRattachementPerdu(lien)}`, "danger");
           } else {
             notify(
               lien.status === "ok"
@@ -2062,6 +2075,8 @@
     render();
     if (lien.status === "unite") {
       notify(`Ouvrage enregistré, mais ${messageRattachementUnite(lien)}`, "danger");
+    } else if (lien.status === "autreMetre" || lien.status === "autrePoste") {
+      notify(`Ouvrage enregistré, mais ${messageRattachementPerdu(lien)}`, "danger");
     } else if (lien.status === "ok") {
       notify(`Ouvrage enregistré et rattaché au poste « ${lien.row.numero} ».`, "info");
     } else {
@@ -2531,7 +2546,7 @@
 
   $("#ouvrage-cancel-edit").addEventListener("click", () => {
     editingOuvrageId = "";
-    creatingOuvrageForMetreRow = -1;
+    posteEnAttente = null;
     $("#ouvrage-form").reset();
     setComposantRows([]);
     updateEditForms();
@@ -2575,7 +2590,7 @@
     const ouvrage = ouvrageById(id);
     if (!ouvrage) return;
     editingOuvrageId = id;
-    creatingOuvrageForMetreRow = -1;
+    posteEnAttente = null;
     const form = $("#ouvrage-form");
     form.elements.nom.value = ouvrage.nom;
     form.elements.unite.value = ouvrage.unite;
@@ -2597,7 +2612,7 @@
     if (!row) return;
     goToView("ouvrages");
     editingOuvrageId = "";
-    creatingOuvrageForMetreRow = Number(index);
+    posteEnAttente = { metreId: state.metre.id, rowIndex: Number(index), numero: String(row.numero) };
     const form = $("#ouvrage-form");
     form.reset();
     setComposantRows([]);
@@ -2889,7 +2904,6 @@
       // le fichier reçu » ecrivait l'analyse importee dans le fichier precedent.
       sourceArrayBuffer = null;
       sourceFileName = "";
-      creatingOuvrageForMetreRow = -1;
       DGStore.clearSource();
       saveState();
       render();

@@ -1365,6 +1365,23 @@
     return { analysed, alerts };
   }
 
+  // Le poste laisse en attente par « Créer un ouvrage à partir de ce poste » n'est
+  // pas identifie par son seul rang : entre le clic et l'enregistrement de l'ouvrage,
+  // un autre metre a pu etre importe (nouveau state.metre, meme rang) ou la colonne
+  // « poste » a pu changer a la reanalyse. Rattacher a l'aveugle ecrasait alors la
+  // correspondance d'un poste sans rapport, sans le dire. On exige donc le meme
+  // metre ET le meme numero de poste, et on refuse en le disant.
+  function resoudrePosteEnAttente(attente, metre) {
+    if (!attente || !metre || !attente.metreId) return { status: "aucun", row: null };
+    if (attente.metreId !== metre.id) return { status: "autreMetre", row: null, numero: attente.numero || "" };
+    const row = (metre.analysed || [])[Number(attente.rowIndex)];
+    if (!row) return { status: "aucun", row: null };
+    if (attente.numero && String(row.numero) !== String(attente.numero)) {
+      return { status: "autrePoste", row: null, numero: attente.numero };
+    }
+    return { status: "ok", row };
+  }
+
   /* ------------------------------------------------------------------ doublons */
 
   function findDuplicates(ouvrages, priceOf) {
@@ -1680,6 +1697,7 @@
     METRE_STATUS_LABELS,
     resumeMetre,
     analyseRows,
+    resoudrePosteEnAttente,
     isForfaitUnit,
     parseDelimited,
   };

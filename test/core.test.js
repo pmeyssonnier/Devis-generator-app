@@ -1513,3 +1513,52 @@ test("un devis deja fige n'est pas repricé par une relecture de l'etat", () => 
   assert.equal(devis.contexte.coutHoraire, 47.5, "le contexte d'origine est conservé");
   assert.equal(C.totauxDevis(devis).ht, 1588);
 });
+
+/* ----------------------------------------------- poste en attente de création */
+
+const metreAvecPostes = (id, numeros) => ({
+  id,
+  analysed: numeros.map((numero, index) => ({ numero, poste: numero, description: `Poste ${numero}`, rowIndex: index })),
+});
+
+test("le poste en attente est retrouve dans son propre metre", () => {
+  const metre = metreAvecPostes("m-1", ["01.01", "01.02", "01.03"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 1, numero: "01.02" }, metre);
+  assert.equal(cible.status, "ok");
+  assert.equal(cible.row.numero, "01.02");
+});
+
+test("un nouveau metre importe entretemps annule le rattachement", () => {
+  // Le scenario du bug : clic sur « Créer un ouvrage à partir de ce poste » dans le
+  // metre de Bruxelles, import d'Uccle pendant qu'on remplit le formulaire, puis
+  // enregistrement. Le rang 1 existe dans les deux — rattacher serait silencieux.
+  const bruxelles = { metreId: "m-1", rowIndex: 1, numero: "01.02" };
+  const uccle = metreAvecPostes("m-2", ["A", "B", "C"]);
+  const cible = C.resoudrePosteEnAttente(bruxelles, uccle);
+  assert.equal(cible.status, "autreMetre");
+  assert.equal(cible.row, null);
+  assert.equal(cible.numero, "01.02", "le numero d'origine sert a nommer le poste dans le message");
+});
+
+test("un poste qui a change de rang apres reanalyse annule le rattachement", () => {
+  const metre = metreAvecPostes("m-1", ["01.01", "01.03", "01.02"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 1, numero: "01.02" }, metre);
+  assert.equal(cible.status, "autrePoste");
+  assert.equal(cible.row, null);
+});
+
+test("rien en attente, metre absent ou rang disparu : aucun rattachement, aucune erreur", () => {
+  const metre = metreAvecPostes("m-1", ["01.01"]);
+  assert.equal(C.resoudrePosteEnAttente(null, metre).status, "aucun");
+  assert.equal(C.resoudrePosteEnAttente({ rowIndex: 0 }, metre).status, "aucun", "attente sans metreId");
+  assert.equal(C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 7, numero: "01.01" }, metre).status, "aucun");
+  assert.equal(C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 0 }, null).status, "aucun");
+});
+
+test("une attente sans numero reste acceptee sur son metre", () => {
+  // Compatibilite : une attente posee par une version anterieure n'a pas de numero.
+  const metre = metreAvecPostes("m-1", ["01.01", "01.02"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 0 }, metre);
+  assert.equal(cible.status, "ok");
+  assert.equal(cible.row.numero, "01.01");
+});
