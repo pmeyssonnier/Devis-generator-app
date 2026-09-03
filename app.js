@@ -11,7 +11,7 @@
   const CATALOG_VERSION = 1;
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
-  const APP_VERSION = "2.2.0";
+  const APP_VERSION = "3.0.0";
   // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
   // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
   const THEME_KEY = "generateur-devis-theme";

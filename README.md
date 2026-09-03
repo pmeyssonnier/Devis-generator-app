@@ -295,6 +295,10 @@ n'ayant pas d'outil de build, les deux sont à mettre à jour à la main ensembl
 (`APP_VERSION` dans `app.js`) — utile surtout pour confirmer, une fois déployée sur
 GitHub Pages, que le navigateur affiche bien la dernière version.
 
+Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
+quand la forme des données enregistrées change, ou quand une habitude de travail change.
+Ce qui a changé d'une version à l'autre est dans [CHANGELOG.md](CHANGELOG.md).
+
 ## Tests
 
 ```bash
