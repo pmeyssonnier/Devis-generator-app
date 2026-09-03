@@ -3,6 +3,19 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.2.1 — 2026-09-03
+
+Deux raisons faisaient que « Créer l'ouvrage » ne s'affichait pas là où on l'attendait :
+
+- Les alertes vivent dans l'état enregistré. Celles produites **avant** l'ajout du champ
+  qui porte le numéro du poste n'en avaient pas, donc aucune action n'était proposée sur
+  le métré en cours jusqu'à une réanalyse — précisément le moment où elle sert. Le
+  numéro est maintenant repris du message quand le champ manque, et c'est l'état de la
+  ligne qui décide s'il y a un ouvrage à créer.
+- Un poste rattaché par son code à un ouvrage d'**unité incompatible** porte bien un
+  `ouvrageId`, mais n'est pas chiffrable pour autant. Il était traité comme réglé et
+  perdait son action, alors que son alerte annonce le contraire.
+
 ## 3.2.0 — 2026-09-03
 
 ### Créer l'ouvrage manquant depuis le tableau de bord

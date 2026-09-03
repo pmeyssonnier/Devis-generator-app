@@ -1,6 +1,6 @@
 {
   "name": "generateur-devis",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "Chiffrage batiment : bibliotheque d'ouvrages, devis client et completion de metres de marches publics.",
   "private": true,
   "scripts": {
