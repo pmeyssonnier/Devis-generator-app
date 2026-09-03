@@ -178,3 +178,36 @@ test("la version est lisible en haut à droite et dans les réglages", async ({ 
   expect(boite.x + boite.width).toBeLessThanOrEqual(390);
   await expect(page.locator("#check-update")).toBeVisible();
 });
+
+test("une alerte du tableau de bord mène à la création de l'ouvrage manquant", async ({ page }) => {
+  await page.click('[data-view="metre"]');
+  await page.setInputFiles("#metre-file", CSV);
+  await page.fill("#metre-commune", "Commune de test");
+  await page.click("#analyse-metre");
+  await expect(page.locator("#metre-lines tr")).toHaveCount(3);
+
+  // Le CSV de test est entièrement reconnu : on retire un rapprochement pour obtenir
+  // l'alerte « aucun ouvrage reconnu » telle qu'elle apparaît sur un vrai marché.
+  await page.evaluate(() => {
+    const etat = JSON.parse(localStorage.getItem("generateur-devis-v2"));
+    etat.metre.analysed[0].ouvrageId = "";
+    etat.metre.alerts = [
+      { type: "warning", message: `Poste ${etat.metre.analysed[0].numero} : aucun ouvrage reconnu.`, numero: etat.metre.analysed[0].numero, sujet: "ouvrage-manquant" },
+    ];
+    localStorage.setItem("generateur-devis-v2", JSON.stringify(etat));
+  });
+  await page.reload();
+  await page.click('[data-view="dashboard"]');
+
+  const action = page.locator("#alerts-list .alert-action");
+  await expect(action).toHaveCount(1);
+  await expect(action).toBeVisible();
+  await action.click();
+
+  // On atterrit sur le formulaire d'ouvrage, prérempli avec le poste visé.
+  await expect(page.locator("#ouvrages")).toHaveClass(/active/);
+  const attendu = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("generateur-devis-v2")).metre.analysed[0].description,
+  );
+  await expect(page.locator('#ouvrage-form [name="nom"]')).toHaveValue(attendu);
+});

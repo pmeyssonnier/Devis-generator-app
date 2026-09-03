@@ -768,11 +768,36 @@ textarea {
 }
 
 .alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   border-left: 4px solid var(--warn);
   background: var(--warn-soft-bg);
   padding: 12px;
   border-radius: 6px;
   color: var(--warn-soft-ink);
+}
+
+/* Le bouton d'action ne rétrécit pas et ne se coupe pas : c'est lui qu'on vise. */
+.alert-action {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .alert {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (pointer: coarse) {
+  .alert-action {
+    min-height: 44px;
+  }
 }
 
 .alert.danger {

@@ -229,6 +229,12 @@ POSTE INCONNU
   ↓  saisie à la main
 ```
 
+Le panneau **« Contrôle du dernier métré »** du tableau de bord permet de lancer cette
+chaîne sans revenir au métré : chaque poste non reconnu y porte un bouton **Créer
+l'ouvrage**. Le bouton n'apparaît que là où créer un ouvrage règle le problème — une
+quantité absente se corrige dans le fichier reçu, pas dans la bibliothèque — et
+disparaît dès que le poste est rattaché.
+
 La **recette technique** est le dernier maillon avant la saisie. Elle décrit la
 composition typique d'un ouvrage courant : ses matériaux, leurs quantités par unité, le
 rendement et le matériel. Sur « Remise en état des joints de dilatation en toiture

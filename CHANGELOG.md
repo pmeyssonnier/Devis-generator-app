@@ -3,6 +3,23 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.2.0 — 2026-09-03
+
+### Créer l'ouvrage manquant depuis le tableau de bord
+
+« Contrôle du dernier métré » listait les postes non reconnus sans permettre d'agir :
+il fallait retourner dans le métré, retrouver la ligne, puis cliquer. Chaque alerte de
+ce type porte maintenant un bouton **Créer l'ouvrage**, qui ouvre le formulaire prérempli
+— recette technique comprise — et rattache le poste à l'enregistrement.
+
+Le bouton n'apparaît que là où créer un ouvrage règle vraiment le problème : une
+quantité absente ou une description manquante se corrigent dans le fichier reçu, pas
+dans la bibliothèque. Il disparaît dès que le poste est rattaché.
+
+Les alertes portent désormais le numéro du poste qu'elles désignent, et la résolution se
+fait par ce numéro, jamais par le rang : les alertes sont enregistrées avec l'état, et
+une réanalyse peut les avoir décalées.
+
 ## 3.1.1 — 2026-09-03
 
 - Le numéro de version apparaît dans **Paramètres → À propos**, et plus seulement en
