@@ -68,9 +68,20 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    jamais employés. Les feuilles multiples sont lues, la feuille
    « récapitulatif » est ignorée, les titres de lot sont rattachés aux postes qui les
    suivent, et les sous-totaux comme les tableaux de rappel en bas de feuille sont
-   écartés.
+   écartés. Un CSV encodé en Windows-1252 (le défaut d'un ancien Excel Windows) est
+   reconnu comme tel : sans cela, « Désignation » devenait « D?signation », plus aucun
+   en-tête n'était identifié et le fichier entier était refusé. Les fichiers UTF-16
+   exportés par Excel le sont aussi.
 2. **Vérifier les colonnes** détectées automatiquement, y compris la colonne de prix
-   unitaire à compléter.
+   unitaire à compléter. La détection ne confond plus un prix unitaire avec un total
+   ou un montant, ni la colonne « Prix unitaire » avec une colonne d'unité, et une
+   phrase d'introduction comme « Description des travaux et quantités présumées » n'est
+   plus prise pour la ligne d'en-têtes — un en-tête suppose des libellés courts dans
+   des cellules distinctes. Un en-tête réparti sur **deux lignes** est reconstitué,
+   qu'il s'agisse d'un libellé complété en dessous (« Quantité » puis « présumée ») ou
+   de colonnes réparties entre les deux lignes. Sans cela, un tableau dont les deux
+   dernières colonnes s'appellent toutes deux « Prix » sur la ligne haute recevait les
+   prix unitaires dans la colonne des totaux.
 3. **Analyser** : chaque poste est rapproché d'un ouvrage.
    - **Commune renseignée** : d'abord un code déjà appris pour **cette commune**,
      sinon par similarité de libellé (score affiché). Un code du catalogue de
@@ -106,7 +117,10 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    différents. Pour un poste non reconnu, **« Créer un ouvrage à partir de ce poste »**
    pré-remplit le formulaire (libellé, unité) — avant l'enregistrement, si un ouvrage
    techniquement proche existe déjà (libellé, matériaux, rendement, matériel), l'app le
-   signale et propose de le réutiliser plutôt que de créer un quasi-doublon.
+   signale et propose de le réutiliser plutôt que de créer un quasi-doublon. Le poste
+   ainsi mis en attente est retenu avec le métré auquel il appartient : importer un
+   autre marché entre-temps annule le rattachement et le dit, au lieu de l'appliquer
+   au poste qui occupe le même rang dans le nouveau fichier.
 5. **Compléter le fichier reçu** : les prix unitaires sont écrits dans le classeur
    d'origine. Feuilles, formules, fusions de cellules, largeurs de colonnes, sous-totaux
    et récapitulatif sont conservés — le pouvoir adjudicateur récupère son propre
@@ -136,6 +150,11 @@ Le fichier reçu et le métré chiffré sont conservés sur l'appareil (IndexedD
 - **Rouvrir** restitue les lignes, l'analyse, les colonnes choisies et le fichier reçu —
   de quoi comparer deux marchés ou compléter un CSC rendu la semaine précédente.
   **Retirer** supprime définitivement une entrée de l'historique.
+- Un métré rouvert est **figé au prix rendu** : il affiche les montants remis à
+  l'époque, et réexporter le classeur y réécrit exactement les mêmes prix, quelle que
+  soit la bibliothèque d'aujourd'hui. Un bandeau rappelle le coût horaire et le
+  coefficient K de ce chiffrage. **Recalculer aux prix actuels** rebascule
+  volontairement l'ensemble sur la bibliothèque du jour et annonce l'écart.
 
 Un navigateur qui refuse IndexedDB (navigation privée stricte) fait simplement
 retomber l'application sur son comportement d'avant : le classeur ne survit pas au
@@ -161,6 +180,39 @@ le précédent.
 
 Une bibliothèque enregistrée avant ce changement ne contenait qu'un devis : il devient
 le premier de la liste, avec un numéro et une date attribués s'il n'en avait pas.
+
+## Un devis remis ne bouge plus
+
+Un prix remis à un client est un engagement : il ne doit pas changer parce que la
+bibliothèque a évolué depuis. Chaque ligne de devis conserve donc **le prix tel qu'il a
+été chiffré** — nom, unité, prix unitaire de vente et coût direct sont recopiés dans la
+ligne au moment où elle est ajoutée. Le devis retient en plus le contexte du calcul :
+coût horaire, frais généraux, frais de chantier, imprévus, marge, formule et valeur du
+coefficient K, TVA et date.
+
+Concrètement, augmenter le prix d'un matériau, corriger un rendement ou passer la marge
+de 18 à 24 % ne touche plus un devis déjà chiffré, même rouvert trois mois plus tard.
+Supprimer un ouvrage de la bibliothèque non plus : la ligne reste lisible et chiffrée.
+
+- **Statut.** Un devis est *brouillon* tant qu'il se travaille. **Figer le devis** le
+  passe en *figé* : il n'accepte plus d'ajout, de modification ni de suppression de
+  ligne — c'est la version remise au client. Le bouton refait l'inverse (*Rouvrir en
+  brouillon*) pour préparer une révision, ou l'on **Duplique** pour partir sur une
+  variante en gardant l'original intact.
+- **Écart.** Si la bibliothèque a bougé depuis, un bandeau annonce combien de lignes ne
+  valent plus le même prix et de combien, et le prix du jour s'affiche sous le prix
+  retenu. Le montant du devis, lui, ne change pas.
+- **Actualiser les prix** (brouillon uniquement) reprend les prix d'aujourd'hui sur
+  toutes les lignes, en une action explicite et annoncée. Un devis figé ne propose pas
+  ce bouton.
+
+L'export Excel du devis ajoute en pied de tableau le coût horaire, le coefficient K et
+la formule utilisés : de quoi refaire le calcul plus tard sans deviner les réglages de
+l'époque.
+
+Une bibliothèque enregistrée avant ce changement voit ses lignes figées au prix
+d'aujourd'hui à la première ouverture — c'est la seule valeur dont on dispose — et ses
+devis repartent en brouillon.
 
 ## Corriger la bibliothèque avec les chantiers réalisés
 
@@ -214,7 +266,7 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
 | `db.js` | IndexedDB : classeur reçu et historique des métrés chiffrés |
 | `catalog.js` | Catalogue de départ et codifications connues |
-| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, retour de chantier, péremption des prix |
+| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, gel des prix d'un devis, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
 
@@ -258,18 +310,40 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 - **Migration de l'état** : une bibliothèque enregistrée par une version antérieure
   (ancien couple `materiauId`/`quantiteMateriau`, `referencesMetre`, communes
   homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
+- **Export / import JSON** : le fichier ne contient jamais de métré, il contient tout
+  le reste, il se relit en un état complet, et un import ne détruit pas le métré en
+  cours.
+- **Cas limites d'import** : CSV Windows-1252 et UTF-16, colonne de prix unitaire
+  face à une colonne de total ou de montant, colonne « Prix unitaire » face à une
+  colonne d'unité absente, phrase d'introduction confondue avec la ligne d'en-têtes,
+  en-tête réparti sur deux lignes (et titre de lot ou premier poste qui ne doivent
+  surtout pas y être absorbés).
+- **Prix figés** : une ligne de devis chiffrée hier garde son prix quand la
+  bibliothèque change, un ouvrage supprimé reste lisible, les totaux se lisent sur les
+  valeurs figées et `ecartsDevis` chiffre la dérive sans la subir.
 - **Invariants après remaniement** : après un apprentissage, une fusion ou une
   suppression d'ouvrage, aucun code de métré ne désigne deux ouvrages et aucune
   référence ne pointe vers un ouvrage disparu.
 
 ## Sauvegarde
 
-« Exporter les données » produit un JSON contenant la bibliothèque, les paramètres et
-tous les devis. C'est le seul moyen de transférer la mémoire de chiffrage d'un poste à
-un autre, ou de s'en prémunir contre un vidage du navigateur.
+« Exporter les données » produit un JSON contenant la mémoire de chiffrage :
+bibliothèque, réglages, codes appris par commune, devis et chantiers. C'est le seul
+moyen de transférer cette mémoire d'un poste à un autre, ou de s'en prémunir contre un
+vidage du navigateur.
 
-L'historique des métrés et le classeur reçu vivent dans IndexedDB, en dehors de cet
-export : ils restent propres à l'appareil.
+Le métré en cours n'y est pas, et c'est délibéré. L'export en emportait auparavant une
+moitié — les résultats de l'analyse, mais pas les lignes du fichier reçu : de quoi
+relire, pas de quoi réanalyser. Le partage est maintenant net. Le JSON porte ce qui se
+transporte d'un appareil à l'autre ; le métré en cours, l'historique des métrés et le
+classeur d'origine vivent dans IndexedDB et restent propres à l'appareil — le JSON n'a
+de toute façon jamais su porter le classeur.
+
+Conséquence à l'import : le métré en cours **n'est pas écrasé** par le fichier importé.
+Il garde ses postes, ses quantités et son classeur, donc « Compléter le fichier reçu »
+fonctionne toujours ; l'application signale seulement qu'il faut relancer l'analyse pour
+le rapprocher de la bibliothèque qui vient d'arriver. Un export ancien, lui, contenait
+un métré amputé : il est ignoré au profit de celui de l'appareil, sauf s'il est complet.
 
 ## Limites connues
 

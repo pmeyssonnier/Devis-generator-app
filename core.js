@@ -831,6 +831,88 @@
     return best;
   }
 
+  /* ------------------------------------------------------------ prix figes */
+
+  /*
+   * Un devis remis au client est un engagement, pas une requete sur la bibliotheque
+   * du jour. Sans photographie, modifier trois mois plus tard le prix d'un materiau,
+   * un rendement ou le coefficient K changeait retroactivement le montant d'un devis
+   * deja envoye — et personne n'en etait averti.
+   *
+   * On fige donc deux choses : le contexte de prix (ce qui, dans les reglages,
+   * determine une vente) et, sur chaque ligne, le prix arrete. La bibliotheque peut
+   * ensuite evoluer librement.
+   */
+  function contextePrix(settings) {
+    const source = settings || {};
+    return {
+      coutHoraire: Number(source.coutHoraire) || 0,
+      fraisGeneraux: Number(source.fraisGeneraux) || 0,
+      fraisChantier: Number(source.fraisChantier) || 0,
+      imprevus: Number(source.imprevus) || 0,
+      marge: Number(source.marge) || 0,
+      formuleK: source.formuleK === "multiplicative" ? "multiplicative" : "additive",
+      coefficientK: coefficientK(source),
+    };
+  }
+
+  /*
+   * Photographie d'une ligne de devis. Le libelle et l'unite sont copies eux aussi :
+   * un ouvrage renomme, ou supprime de la bibliotheque, ne doit pas rendre illisible
+   * un devis deja remis. coutDirect permet de justifier la marge a posteriori.
+   */
+  function figerLigneDevis(ligne, ouvrage, calcul) {
+    return {
+      id: ligne.id,
+      ouvrageId: ligne.ouvrageId,
+      quantite: Number(ligne.quantite) || 0,
+      nom: ouvrage ? ouvrage.nom : ligne.nom || "Ouvrage supprimé",
+      unite: ouvrage ? ouvrage.unite : ligne.unite || "",
+      puHtva: calcul ? roundMoney(calcul.vente) : Number(ligne.puHtva) || 0,
+      coutDirect: calcul ? roundMoney(calcul.direct) : Number(ligne.coutDirect) || 0,
+    };
+  }
+
+  // Totaux d'un devis, lus sur les prix figes — jamais recalcules.
+  function totauxDevis(devis) {
+    const ht = (devis.lignes || []).reduce(
+      (somme, ligne) => somme + (Number(ligne.puHtva) || 0) * (Number(ligne.quantite) || 0),
+      0,
+    );
+    const tva = ht * (Number(devis.tva) || 0) / 100;
+    return { ht: roundMoney(ht), tva: roundMoney(tva), ttc: roundMoney(ht + tva) };
+  }
+
+  /*
+   * Ecart entre ce qui a ete chiffre et ce que la bibliotheque donnerait aujourd'hui.
+   * C'est la difference entre les deux lectures : « montant remis au client » et
+   * « montant si je refaisais ce devis maintenant ». venteActuelle(ouvrageId) rend le
+   * prix du jour, ou null si l'ouvrage n'existe plus.
+   */
+  function ecartsDevis(devis, venteActuelle) {
+    const lignes = (devis.lignes || []).map((ligne) => {
+      const actuel = venteActuelle(ligne.ouvrageId);
+      const puActuel = actuel === null || actuel === undefined ? null : roundMoney(actuel);
+      const quantite = Number(ligne.quantite) || 0;
+      const puFige = Number(ligne.puHtva) || 0;
+      return {
+        id: ligne.id,
+        puFige,
+        puActuel,
+        // Un ouvrage disparu n'est pas un ecart de prix : c'est un autre probleme,
+        // signale ailleurs, et il ne doit pas gonfler le total des ecarts.
+        ecart: puActuel === null ? 0 : roundMoney((puActuel - puFige) * quantite),
+        introuvable: puActuel === null,
+      };
+    });
+    const modifiees = lignes.filter((ligne) => !ligne.introuvable && ligne.puActuel !== ligne.puFige);
+    return {
+      lignes,
+      nbModifiees: modifiees.length,
+      ecartTotal: roundMoney(modifiees.reduce((somme, ligne) => somme + ligne.ecart, 0)),
+    };
+  }
+
   /* --------------------------------------------------------------- etat metier */
 
   /*
@@ -846,7 +928,21 @@
     // sous quel profil les confirmations sont memorisees.
     // id : identifie ce metre dans l'historique (IndexedDB), pour pouvoir le rouvrir
     // avec ses lignes, son analyse et le fichier recu.
-    return { id: "", fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
+    // fige : metre rouvert depuis l'historique. Ses montants sont ceux du jour ou il a
+    // ete rendu au pouvoir adjudicateur, pas ceux de la bibliotheque d'aujourd'hui.
+    return {
+      id: "",
+      fileName: "",
+      commune: "",
+      analysedCommune: "",
+      fige: false,
+      contexte: null,
+      rows: [],
+      analysed: [],
+      alerts: [],
+      skipped: 0,
+      mapping: {},
+    };
   }
 
   function blankState(catalog) {
@@ -958,6 +1054,7 @@
     const aujourdhui = /^\d{4}-\d{2}-\d{2}$/.test(String(deps.today || "")) ? deps.today : "";
     const sourceDevis =
       Array.isArray(source.devisList) && source.devisList.length ? source.devisList : [source.devis || {}];
+    const contexteActuel = contextePrix(next.settings);
     next.devisList = sourceDevis.map((devis) => ({
       id: devis.id || uid(),
       numero: String(devis.numero || "").trim(),
@@ -965,17 +1062,30 @@
       client: devis.client || "",
       adresse: devis.adresse || "",
       objet: devis.objet || "",
+      // Un devis fige n'accepte plus ni recalcul ni modification de ligne : c'est le
+      // document remis au client.
+      statut: devis.statut === "fige" ? "fige" : "brouillon",
+      // Reglages avec lesquels ce devis a ete chiffre. Un devis anterieur au figeage
+      // n'en avait pas : on prend ceux d'aujourd'hui, faute de mieux, ce qui est
+      // coherent avec les prix figes ci-dessous.
+      contexte: devis.contexte && Number.isFinite(Number(devis.contexte.coefficientK)) ? devis.contexte : contexteActuel,
       // 0 % est une valeur legitime (regime cocontractant, courant en marche public) :
       // « || 21 » la remettait a 21 a chaque rechargement.
       tva:
         Number.isFinite(Number(devis.tva)) && devis.tva !== null && devis.tva !== ""
           ? Number(devis.tva)
           : Number(next.settings.tva) || 21,
-      lignes: (devis.lignes || []).map((ligne) => ({
-        id: ligne.id || uid(),
-        ouvrageId: ligne.ouvrageId || "",
-        quantite: Number(ligne.quantite) || 0,
-      })),
+      lignes: (devis.lignes || []).map((ligne) => {
+        const base = { id: ligne.id || uid(), ouvrageId: ligne.ouvrageId || "", quantite: Number(ligne.quantite) || 0 };
+        // Ligne enregistree avant le figeage : on la fige au prix du jour, seule
+        // approximation disponible, plutot que de la laisser flotter indefiniment.
+        if (Number.isFinite(Number(ligne.puHtva)) && ligne.puHtva !== null && ligne.puHtva !== "") {
+          return figerLigneDevis({ ...base, ...ligne }, null, null);
+        }
+        const ouvrage = next.ouvrages.find((item) => item.id === base.ouvrageId);
+        const calcul = ouvrage ? calculateOuvrage(ouvrage, next.settings, next.materiaux) : null;
+        return figerLigneDevis(base, ouvrage, calcul);
+      }),
     }));
     // Numeros manquants (migration) : attribues dans l'ordre, par annee.
     next.devisList.forEach((devis) => {
@@ -1136,10 +1246,10 @@
 
   // Indice de colonne d'une ligne brute, en retombant sur la detection d'en-tete quand
   // le nom mappe n'existe pas dans la feuille dont vient cette ligne.
-  function columnIndex(raw, headerName, candidates) {
+  function columnIndex(raw, headerName, cle) {
     const cols = raw.__cols || {};
     if (headerName && cols[headerName] !== undefined) return cols[headerName];
-    const fallback = findHeader(Object.keys(cols), candidates);
+    const fallback = headerFor(Object.keys(cols), cle);
     return fallback ? cols[fallback] : undefined;
   }
 
@@ -1195,7 +1305,7 @@
     const analysed = rows.map((raw, index) => {
       // Chaque feuille garde ses propres en-tetes : le mapping global ne vaut que pour
       // l'une d'elles, les autres sont resolues ligne par ligne.
-      const champ = (cle) => rowField(raw, mapping[cle], HEADER_CANDIDATES[cle]);
+      const champ = (cle) => rowField(raw, mapping[cle], cle);
       const numeroLu = String(champ("poste") ?? "").trim();
       // Sans numero dans le fichier, on en fabrique un pour l'affichage seulement : il
       // ne doit jamais etre appris ni recherche comme code.
@@ -1248,11 +1358,53 @@
         manual: false,
         sheet: raw.__sheet || "",
         rowIndex: raw.__row,
-        puCol: columnIndex(raw, mapping.prixUnitaire, HEADER_CANDIDATES.prixUnitaire),
+        puCol: columnIndex(raw, mapping.prixUnitaire, "prixUnitaire"),
       };
     });
 
     return { analysed, alerts };
+  }
+
+  // Le poste laisse en attente par « Créer un ouvrage à partir de ce poste » n'est
+  // pas identifie par son seul rang : entre le clic et l'enregistrement de l'ouvrage,
+  // un autre metre a pu etre importe (nouveau state.metre, meme rang) ou la colonne
+  // « poste » a pu changer a la reanalyse. Rattacher a l'aveugle ecrasait alors la
+  // correspondance d'un poste sans rapport, sans le dire. On exige donc le meme
+  // metre ET le meme numero de poste, et on refuse en le disant.
+  function resoudrePosteEnAttente(attente, metre) {
+    if (!attente || !metre || !attente.metreId) return { status: "aucun", row: null };
+    if (attente.metreId !== metre.id) return { status: "autreMetre", row: null, numero: attente.numero || "" };
+    const row = (metre.analysed || [])[Number(attente.rowIndex)];
+    if (!row) return { status: "aucun", row: null };
+    if (attente.numero && String(row.numero) !== String(attente.numero)) {
+      return { status: "autrePoste", row: null, numero: attente.numero };
+    }
+    return { status: "ok", row };
+  }
+
+  /*
+   * L'export general emportait le metre courant amoute : « analysed » present,
+   * « rows » vide. Un etat intermediaire inexploitable — on retrouvait les resultats
+   * affiches sans pouvoir relancer l'analyse, faute des lignes du fichier recu.
+   *
+   * Le partage est desormais net : le JSON transporte la memoire de chiffrage
+   * (bibliotheque, reglages, codes par commune, devis, chantiers), le metre courant
+   * et l'historique des metres appartiennent a l'appareil (IndexedDB, avec le
+   * classeur d'origine, que le JSON n'a jamais su porter).
+   */
+  function donneesExportables(etat) {
+    const { metre, ...reste } = etat || {};
+    return reste;
+  }
+
+  // Un export d'aujourd'hui ne porte pas de metre : celui en cours ne doit pas
+  // disparaitre pour autant. Un export ancien en portait un, mais sans ses lignes :
+  // on ne le reprend que s'il est complet, et on garde sinon celui de l'appareil,
+  // qui lui est utilisable.
+  function metreApresImport(importe, courant) {
+    const candidat = importe && importe.metre;
+    const complet = candidat && Array.isArray(candidat.rows) && candidat.rows.length > 0;
+    return complet ? candidat : courant;
   }
 
   /* ------------------------------------------------------------------ doublons */
@@ -1298,13 +1450,43 @@
 
   /* ------------------------------------------------------------ lecture metre */
 
-  function findHeader(headers, candidates) {
-    const normalized = headers.map((header) => ({
-      raw: header,
-      normalized: normalizeText(header),
-      // "P.U. (€)" -> "pu" : la ponctuation interne varie d'un cahier a l'autre.
-      compact: normalizeText(header).replace(/[^a-z0-9]/g, ""),
-    }));
+  /*
+   * Un CSV exporte par un Excel Windows est le plus souvent en Windows-1252, pas en
+   * UTF-8 : file.text() y remplace chaque octet accentue par U+FFFD, « Désignation »
+   * devient « D?signation », findHeaderRowIndex ne reconnait plus rien et le fichier
+   * entier est refuse — « Aucune ligne exploitable » sur un metre parfaitement lisible.
+   * On decode donc en UTF-8 strict, et on retombe sur Windows-1252 quand les octets
+   * n'en sont pas : du texte cp1252 accentue n'est jamais de l'UTF-8 valide.
+   */
+  function decoderTexte(octets) {
+    const vue = octets instanceof Uint8Array ? octets : new Uint8Array(octets);
+    // Excel « Texte Unicode (.txt) » ecrit de l'UTF-16 avec marque d'ordre.
+    if (vue[0] === 0xff && vue[1] === 0xfe) return new TextDecoder("utf-16le").decode(vue);
+    if (vue[0] === 0xfe && vue[1] === 0xff) return new TextDecoder("utf-16be").decode(vue);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(vue);
+    } catch {
+      return new TextDecoder("windows-1252").decode(vue);
+    }
+  }
+
+  // exclusions : mots qui disqualifient une colonne quoi qu'il arrive. Les candidats
+  // vont du plus precis au plus generique, mais findHeader compare passe par passe
+  // (exact, compact, mot, inclusion) : un candidat generique atteint en passe 3
+  // l'emporte donc sur un candidat precis qui n'aurait matche qu'en passe 4. C'est
+  // ainsi que « Prix total HTVA » devenait la colonne des prix unitaires des qu'elle
+  // precedait « Prix unitaire HTVA », et que « Prix unitaire » servait de colonne
+  // d'unite (« un ») dans un metre qui n'en avait pas.
+  function findHeader(headers, candidates, exclusions) {
+    const interdits = exclusions || [];
+    const normalized = headers
+      .map((header) => ({
+        raw: header,
+        normalized: normalizeText(header),
+        // "P.U. (€)" -> "pu" : la ponctuation interne varie d'un cahier a l'autre.
+        compact: normalizeText(header).replace(/[^a-z0-9]/g, ""),
+      }))
+      .filter((entry) => !interdits.some((mot) => entry.normalized.includes(mot)));
     for (const candidate of candidates) {
       const exact = normalized.find((entry) => entry.normalized === candidate);
       if (exact) return exact.raw;
@@ -1333,14 +1515,112 @@
     prixUnitaire: ["pu", "pu htva", "p u", "prix unitaire", "prix", "pu hors tva", "pu e"],
   };
 
+  const HEADER_EXCLUSIONS = {
+    prixUnitaire: ["total", "montant", "somme"],
+    unite: ["prix", "montant", "total"],
+    quantite: ["prix", "montant"],
+  };
+
+  const headerFor = (headers, cle) => findHeader(headers, HEADER_CANDIDATES[cle], HEADER_EXCLUSIONS[cle]);
+
+  /*
+   * Un en-tete est fait de libelles courts places dans des cellules DISTINCTES. Une
+   * phrase d'introduction comme « Description des travaux et quantités présumées »
+   * reunit les deux signaux dans une seule cellule fusionnee : elle passait pour
+   * l'en-tete du tableau, et tout le metre etait ensuite lu sur les mauvaises colonnes.
+   * D'ou les deux exigences : cellules differentes, et cellule d'unite ou de quantite
+   * assez courte pour etre un libelle de colonne et non une phrase.
+   */
+  const LIBELLE_COLONNE_MAX = 24;
+
+  function ligneEstEnTete(line) {
+    const normalized = (line || []).map(normalizeText);
+    const court = (index) => normalized[index].length <= LIBELLE_COLONNE_MAX;
+    const description = normalized.findIndex((cell) => /designation|description|libelle|travaux|ouvrage/.test(cell));
+    if (description === -1) return false;
+    const unite = normalized.findIndex(
+      (cell, index) => index !== description && court(index) && (cell === "u" || cell === "un" || cell.includes("unite")),
+    );
+    const quantite = normalized.findIndex(
+      (cell, index) => index !== description && court(index) && (cell.includes("quantite") || /^qt/.test(cell)),
+    );
+    return unite !== -1 || quantite !== -1;
+  }
+
   function findHeaderRowIndex(grid) {
-    return grid.findIndex((line) => {
-      const normalized = line.map(normalizeText);
-      const hasDescription = normalized.some((cell) => /designation|description|libelle|travaux|ouvrage/.test(cell));
-      const hasUnit = normalized.some((cell) => cell === "u" || cell === "un" || cell.includes("unite"));
-      const hasQuantity = normalized.some((cell) => cell.includes("quantite") || /^qt/.test(cell));
-      return hasDescription && (hasUnit || hasQuantity);
-    });
+    return grid.findIndex(ligneEstEnTete);
+  }
+
+  /*
+   * Beaucoup de cahiers des charges coiffent leur tableau d'un en-tete sur DEUX
+   * lignes : le libelle au-dessus et sa precision en dessous (« Quantité » puis
+   * « présumée », « Prix » puis « unitaire HTVA »), ou les colonnes de gauche sur la
+   * premiere ligne et celles de droite sur la seconde. Aucune des deux lignes ne
+   * porte alors tous les signaux, et le tableau entier etait declare illisible :
+   * « Aucune ligne exploitable » sur un metre parfaitement ordinaire.
+   *
+   * On ne cherche la paire QUE si aucune ligne seule ne convient : le comportement
+   * des fichiers deja lisibles est inchange, et une paire de lignes de postes ne
+   * peut pas etre prise pour un en-tete (« Enduit de façade », « m2 » ne declenchent
+   * ni le signal description ni le signal unite).
+   */
+  function fusionnerLignesEnTete(haute, basse) {
+    const largeur = Math.max((haute || []).length, (basse || []).length);
+    const fusion = [];
+    for (let index = 0; index < largeur; index += 1) {
+      const dessus = String((haute || [])[index] ?? "").trim();
+      const dessous = String((basse || [])[index] ?? "").trim();
+      fusion.push([dessus, dessous].filter(Boolean).join(" "));
+    }
+    return fusion;
+  }
+
+  /*
+   * Ligne de continuation d'un en-tete : « Quantité » puis « présumée », « Prix » puis
+   * « unitaire HTVA ». Sans la reconnaitre, un tableau dont les deux dernieres colonnes
+   * s'appellent toutes deux « Prix » sur la ligne haute (« unitaire » / « total » sur la
+   * basse) donne deux colonnes de meme nom : la seconde ecrase la premiere, et le prix
+   * unitaire part dans la colonne des totaux du fichier rendu.
+   *
+   * Le discriminant est la colonne de description : une continuation l'a vide, alors
+   * qu'un poste comme un titre de lot y ecrit son libelle. S'y ajoutent les garde-fous
+   * evidents — pas de code, pas de nombre, que des libelles courts, et ni titre de lot
+   * ni ligne en capitales, qui suivent souvent l'en-tete immediatement.
+   */
+  function estSuiteDEnTete(ligne, indexDescription) {
+    const cellules = (ligne || []).map((valeur) => String(valeur ?? "").trim());
+    const joined = cellules.filter(Boolean).join(" ");
+    if (!joined) return false;
+    if (cellules[indexDescription]) return false;
+    // Pas de test isTotalRow ici : « total » est un mot de colonne parfaitement
+    // legitime sur une ligne de continuation (« Prix » / « total »). Un vrai
+    // sous-total, lui, ecrit son libelle dans la colonne de description.
+    if (/lot|chapitre|section|partie/i.test(joined)) return false;
+    if (joined === joined.toUpperCase()) return false;
+    return cellules.every(
+      (cellule) =>
+        !cellule ||
+        (cellule.length <= LIBELLE_COLONNE_MAX && !looksLikeCode(cellule) && !Number.isFinite(parseNumber(cellule))),
+    );
+  }
+
+  const indexDescription = (ligne) =>
+    (ligne || []).findIndex((cellule) => /designation|description|libelle|travaux|ouvrage/.test(normalizeText(cellule)));
+
+  function detecterEnTete(grid) {
+    const simple = findHeaderRowIndex(grid);
+    if (simple !== -1) {
+      const description = indexDescription(grid[simple]);
+      if (description !== -1 && estSuiteDEnTete(grid[simple + 1], description)) {
+        return { index: simple, hauteur: 2, cellules: fusionnerLignesEnTete(grid[simple], grid[simple + 1]) };
+      }
+      return { index: simple, hauteur: 1, cellules: grid[simple] };
+    }
+    for (let index = 0; index < grid.length - 1; index += 1) {
+      const fusion = fusionnerLignesEnTete(grid[index], grid[index + 1]);
+      if (ligneEstEnTete(fusion)) return { index, hauteur: 2, cellules: fusion };
+    }
+    return { index: -1, hauteur: 0, cellules: [] };
   }
 
   function looksLikeCode(value) {
@@ -1359,24 +1639,27 @@
    * ecrire les prix dans le classeur recu sans le reconstruire.
    */
   function rowsFromGrid(grid, sheetName) {
-    const headerIndex = findHeaderRowIndex(grid);
-    if (headerIndex === -1) return { rows: [], headers: [], skipped: 0, headerIndex: -1 };
+    const entete = detecterEnTete(grid);
+    const headerIndex = entete.index;
+    if (headerIndex === -1) return { rows: [], headers: [], skipped: 0, headerIndex: -1, headerRows: 0 };
 
-    const headers = grid[headerIndex].map((cell, index) => {
+    // Premiere ligne de postes : juste apres l'en-tete, qu'il tienne sur une ou deux lignes.
+    const premiereLigne = headerIndex + entete.hauteur;
+    const headers = entete.cellules.map((cell, index) => {
       const label = String(cell ?? "").trim();
       return label || `Colonne ${index + 1}`;
     });
     const columns = Object.fromEntries(headers.map((header, index) => [header, index]));
-    const posteHeader = findHeader(headers, HEADER_CANDIDATES.poste);
-    const descriptionHeader = findHeader(headers, HEADER_CANDIDATES.description);
-    const uniteHeader = findHeader(headers, HEADER_CANDIDATES.unite);
-    const quantiteHeader = findHeader(headers, HEADER_CANDIDATES.quantite);
+    const posteHeader = headerFor(headers, "poste");
+    const descriptionHeader = headerFor(headers, "description");
+    const uniteHeader = headerFor(headers, "unite");
+    const quantiteHeader = headerFor(headers, "quantite");
 
     const rows = [];
     let skipped = 0;
     let currentLot = "";
 
-    grid.slice(headerIndex + 1).forEach((line, offset) => {
+    grid.slice(premiereLigne).forEach((line, offset) => {
       const cell = (header) => String(line[columns[header]] ?? "").trim();
       const poste = posteHeader ? cell(posteHeader) : "";
       const description = descriptionHeader ? cell(descriptionHeader) : "";
@@ -1422,13 +1705,13 @@
       rows.push({
         ...Object.fromEntries(headers.map((header, index) => [header, line[index] ?? ""])),
         __sheet: sheetName || "",
-        __row: headerIndex + 1 + offset,
+        __row: premiereLigne + offset,
         __cols: columns,
         __lot: currentLot || sheetName || "",
       });
     });
 
-    return { rows, headers, skipped, headerIndex };
+    return { rows, headers, skipped, headerIndex, headerRows: entete.hauteur };
   }
 
   /*
@@ -1438,11 +1721,11 @@
    * pas dans cette ligne, on cherche l'equivalent parmi ses propres colonnes. Sans
    * cela, la moitie des colonnes d'un classeur multi-feuilles se vidait.
    */
-  function rowField(raw, header, candidates) {
+  function rowField(raw, header, cle) {
     // Pas d'en-tete choisi (« — ») : choix explicite de l'utilisateur, on le respecte.
     if (!header) return undefined;
     if (Object.prototype.hasOwnProperty.call(raw, header)) return raw[header];
-    const fallback = findHeader(Object.keys(raw.__cols || {}), candidates);
+    const fallback = headerFor(Object.keys(raw.__cols || {}), cle);
     return fallback ? raw[fallback] : undefined;
   }
 
@@ -1549,7 +1832,12 @@
     ouvrageProximityDetail,
     bestOuvrageMatch,
     findHeader,
+    headerFor,
+    HEADER_EXCLUSIONS,
+    decoderTexte,
     findHeaderRowIndex,
+    detecterEnTete,
+    fusionnerLignesEnTete,
     looksLikeCode,
     rowsFromGrid,
     rowField,
@@ -1557,8 +1845,14 @@
     emptyMetre,
     blankState,
     normalizeState,
+    donneesExportables,
+    metreApresImport,
     resolveCommuneKey,
     numeroDevisSuivant,
+    contextePrix,
+    figerLigneDevis,
+    totauxDevis,
+    ecartsDevis,
     memoriserCode,
     supprimerOuvrage,
     fusionnerOuvrages,
@@ -1566,6 +1860,7 @@
     METRE_STATUS_LABELS,
     resumeMetre,
     analyseRows,
+    resoudrePosteEnAttente,
     isForfaitUnit,
     parseDelimited,
   };

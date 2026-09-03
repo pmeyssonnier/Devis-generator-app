@@ -919,19 +919,19 @@ test("rowField retrouve la colonne d'une ligne dont la feuille a d'autres en-tet
   // poste/description et ceux du Lot 1 pour unite/quantite (premier trouve).
   const mapping = { poste: "Poste", description: "Désignation", unite: "Unité", quantite: "Quantité" };
   const lu = rows.map((raw) => ({
-    numero: String(C.rowField(raw, mapping.poste, C.HEADER_CANDIDATES.poste) ?? "").trim(),
-    description: String(C.rowField(raw, mapping.description, C.HEADER_CANDIDATES.description) ?? "").trim(),
-    unite: String(C.rowField(raw, mapping.unite, C.HEADER_CANDIDATES.unite) ?? "").trim(),
-    quantite: C.parseNumber(C.rowField(raw, mapping.quantite, C.HEADER_CANDIDATES.quantite)),
+    numero: String(C.rowField(raw, mapping.poste, "poste") ?? "").trim(),
+    description: String(C.rowField(raw, mapping.description, "description") ?? "").trim(),
+    unite: String(C.rowField(raw, mapping.unite, "unite") ?? "").trim(),
+    quantite: C.parseNumber(C.rowField(raw, mapping.quantite, "quantite")),
   }));
   assert.deepEqual(lu, [
     { numero: "1.01", description: "Enduit de façade", unite: "m2", quantite: 120 },
     { numero: "2.01", description: "Peinture des murs", unite: "m2", quantite: 80 },
   ]);
   // L'en-tete mappe present mais vide reste vide : pas de repli sur une autre colonne.
-  assert.equal(C.rowField({ Description: "", __cols: { Description: 1, Désignation: 2 }, Désignation: "x" }, "Description", C.HEADER_CANDIDATES.description), "");
+  assert.equal(C.rowField({ Description: "", __cols: { Description: 1, Désignation: 2 }, Désignation: "x" }, "Description", "description"), "");
   // Aucun en-tete choisi (« — ») : choix explicite, pas de detection a la place de l'utilisateur.
-  assert.equal(C.rowField(rows[0], "", C.HEADER_CANDIDATES.poste), undefined);
+  assert.equal(C.rowField(rows[0], "", "poste"), undefined);
 });
 
 test("un poste dont le libelle contient « total » ou « report » n'est pas un sous-total", () => {
@@ -1390,4 +1390,355 @@ test("fusionner deux ouvrages remappe les lignes de TOUS les devis", () => {
     ["b", "b", "b"],
     "aucune ligne ne reste sur l'ouvrage fusionne, dans aucun devis",
   );
+});
+
+/* -------------------------------------------------------------- prix figés */
+
+const OUVRAGE_FIGE = { id: "o1", nom: "Carrelage de sol", unite: "m2", heures: 0.55, materiel: 5, composants: [{ materiauId: "m1", quantite: 1 }] };
+const MATERIAUX_FIGE = [{ id: "m1", nom: "Grès cérame", unite: "m2", prix: 26 }];
+const REGLAGES_FIGE = { coutHoraire: 47.5, fraisGeneraux: 12, fraisChantier: 5, imprevus: 4, marge: 18 };
+
+test("contextePrix photographie ce qui, dans les reglages, fait le prix", () => {
+  const contexte = C.contextePrix(REGLAGES_FIGE);
+  assert.equal(contexte.coutHoraire, 47.5);
+  assert.equal(contexte.marge, 18);
+  assert.equal(contexte.formuleK, "additive");
+  assert.equal(contexte.coefficientK, C.coefficientK(REGLAGES_FIGE));
+  const multi = C.contextePrix({ ...REGLAGES_FIGE, formuleK: "multiplicative" });
+  assert.equal(multi.formuleK, "multiplicative");
+  assert.ok(multi.coefficientK > contexte.coefficientK);
+  // Des reglages absents ne doivent jamais produire NaN dans un document contractuel.
+  const vide = C.contextePrix(undefined);
+  assert.equal(vide.coutHoraire, 0);
+  assert.equal(Number.isFinite(vide.coefficientK), true);
+});
+
+test("une ligne figee garde libelle, unite et prix, meme si l'ouvrage change ensuite", () => {
+  const calcul = C.calculateOuvrage(OUVRAGE_FIGE, REGLAGES_FIGE, MATERIAUX_FIGE);
+  const ligne = C.figerLigneDevis({ id: "l1", ouvrageId: "o1", quantite: 20 }, OUVRAGE_FIGE, calcul);
+  assert.equal(ligne.nom, "Carrelage de sol");
+  assert.equal(ligne.unite, "m2");
+  assert.equal(ligne.puHtva, C.roundMoney(calcul.vente));
+  assert.equal(ligne.coutDirect, C.roundMoney(calcul.direct));
+
+  // L'ouvrage evolue : la ligne deja figee ne bouge pas.
+  const apres = C.calculateOuvrage({ ...OUVRAGE_FIGE, heures: 0.9 }, REGLAGES_FIGE, MATERIAUX_FIGE);
+  assert.ok(C.roundMoney(apres.vente) > ligne.puHtva);
+  assert.equal(ligne.puHtva, C.roundMoney(calcul.vente), "la ligne figee est inchangee");
+});
+
+test("un ouvrage supprime ne rend pas la ligne illisible", () => {
+  const ligne = C.figerLigneDevis({ id: "l1", ouvrageId: "disparu", quantite: 3, nom: "Plinthes", unite: "m", puHtva: 20.11 }, null, null);
+  assert.equal(ligne.nom, "Plinthes");
+  assert.equal(ligne.puHtva, 20.11);
+  const sansRien = C.figerLigneDevis({ id: "l2", ouvrageId: "", quantite: 1 }, null, null);
+  assert.equal(sansRien.nom, "Ouvrage supprimé");
+  assert.equal(sansRien.puHtva, 0);
+});
+
+test("les totaux d'un devis sont lus sur les prix figes, jamais recalcules", () => {
+  const devis = {
+    tva: 21,
+    lignes: [
+      { id: "a", puHtva: 20.11, quantite: 20 },
+      { id: "b", puHtva: 90.52, quantite: 4 },
+    ],
+  };
+  const totaux = C.totauxDevis(devis);
+  assert.equal(totaux.ht, 764.28, "20 × 20,11 + 4 × 90,52");
+  assert.equal(totaux.tva, 160.5);
+  assert.equal(totaux.ttc, 924.78);
+  assert.deepEqual(C.totauxDevis({ tva: 0, lignes: [] }), { ht: 0, tva: 0, ttc: 0 });
+  // TVA a 0 % (regime cocontractant) : le total TVAC vaut le HTVA.
+  assert.equal(C.totauxDevis({ tva: 0, lignes: [{ puHtva: 100, quantite: 2 }] }).ttc, 200);
+});
+
+test("ecartsDevis chiffre la difference avec la bibliotheque d'aujourd'hui", () => {
+  const devis = {
+    lignes: [
+      { id: "a", ouvrageId: "o1", puHtva: 20.11, quantite: 20 },
+      { id: "b", ouvrageId: "o2", puHtva: 50, quantite: 2 },
+      { id: "c", ouvrageId: "disparu", puHtva: 12, quantite: 1 },
+    ],
+  };
+  const prix = { o1: 23.11, o2: 50 };
+  const ecarts = C.ecartsDevis(devis, (id) => (id in prix ? prix[id] : null));
+
+  assert.equal(ecarts.nbModifiees, 1, "seule la ligne dont le prix a bouge compte");
+  assert.equal(ecarts.ecartTotal, 60, "3,00 € × 20");
+  assert.equal(ecarts.lignes[1].ecart, 0, "prix identique : aucun ecart");
+  assert.equal(ecarts.lignes[2].introuvable, true);
+  assert.equal(ecarts.lignes[2].puActuel, null);
+  assert.equal(
+    ecarts.lignes[2].ecart,
+    0,
+    "un ouvrage disparu est un autre probleme : il ne gonfle pas le total des ecarts",
+  );
+});
+
+test("les lignes d'un devis anterieur au figeage sont figees au prix du jour", () => {
+  const etat = normaliser({
+    settings: REGLAGES_FIGE,
+    materiaux: MATERIAUX_FIGE,
+    ouvrages: [OUVRAGE_FIGE],
+    devis: { client: "Dupont", tva: 21, lignes: [{ ouvrageId: "o1", quantite: 20 }] },
+  });
+  const ligne = etat.devisList[0].lignes[0];
+  const attendu = C.roundMoney(C.calculateOuvrage(OUVRAGE_FIGE, REGLAGES_FIGE, MATERIAUX_FIGE).vente);
+  assert.equal(ligne.puHtva, attendu);
+  assert.equal(ligne.nom, "Carrelage de sol");
+  assert.equal(ligne.unite, "m2");
+  assert.equal(etat.devisList[0].statut, "brouillon");
+  assert.equal(etat.devisList[0].contexte.coutHoraire, 47.5);
+});
+
+test("un devis deja fige n'est pas repricé par une relecture de l'etat", () => {
+  const etat = normaliser({
+    settings: { ...REGLAGES_FIGE, coutHoraire: 80 },
+    materiaux: MATERIAUX_FIGE,
+    ouvrages: [OUVRAGE_FIGE],
+    devisList: [
+      {
+        id: "d1",
+        numero: "2026-001",
+        statut: "fige",
+        contexte: { coutHoraire: 47.5, coefficientK: 1.39, formuleK: "additive", fraisGeneraux: 12, fraisChantier: 5, imprevus: 4, marge: 18 },
+        lignes: [{ id: "l1", ouvrageId: "o1", quantite: 20, nom: "Carrelage de sol", unite: "m2", puHtva: 79.4, coutDirect: 57.13 }],
+      },
+    ],
+  });
+  const devis = etat.devisList[0];
+  assert.equal(devis.statut, "fige");
+  assert.equal(devis.lignes[0].puHtva, 79.4, "le coût horaire passé à 80 ne touche pas un devis figé");
+  assert.equal(devis.contexte.coutHoraire, 47.5, "le contexte d'origine est conservé");
+  assert.equal(C.totauxDevis(devis).ht, 1588);
+});
+
+/* ----------------------------------------------- poste en attente de création */
+
+const metreAvecPostes = (id, numeros) => ({
+  id,
+  analysed: numeros.map((numero, index) => ({ numero, poste: numero, description: `Poste ${numero}`, rowIndex: index })),
+});
+
+test("le poste en attente est retrouve dans son propre metre", () => {
+  const metre = metreAvecPostes("m-1", ["01.01", "01.02", "01.03"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 1, numero: "01.02" }, metre);
+  assert.equal(cible.status, "ok");
+  assert.equal(cible.row.numero, "01.02");
+});
+
+test("un nouveau metre importe entretemps annule le rattachement", () => {
+  // Le scenario du bug : clic sur « Créer un ouvrage à partir de ce poste » dans le
+  // metre de Bruxelles, import d'Uccle pendant qu'on remplit le formulaire, puis
+  // enregistrement. Le rang 1 existe dans les deux — rattacher serait silencieux.
+  const bruxelles = { metreId: "m-1", rowIndex: 1, numero: "01.02" };
+  const uccle = metreAvecPostes("m-2", ["A", "B", "C"]);
+  const cible = C.resoudrePosteEnAttente(bruxelles, uccle);
+  assert.equal(cible.status, "autreMetre");
+  assert.equal(cible.row, null);
+  assert.equal(cible.numero, "01.02", "le numero d'origine sert a nommer le poste dans le message");
+});
+
+test("un poste qui a change de rang apres reanalyse annule le rattachement", () => {
+  const metre = metreAvecPostes("m-1", ["01.01", "01.03", "01.02"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 1, numero: "01.02" }, metre);
+  assert.equal(cible.status, "autrePoste");
+  assert.equal(cible.row, null);
+});
+
+test("rien en attente, metre absent ou rang disparu : aucun rattachement, aucune erreur", () => {
+  const metre = metreAvecPostes("m-1", ["01.01"]);
+  assert.equal(C.resoudrePosteEnAttente(null, metre).status, "aucun");
+  assert.equal(C.resoudrePosteEnAttente({ rowIndex: 0 }, metre).status, "aucun", "attente sans metreId");
+  assert.equal(C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 7, numero: "01.01" }, metre).status, "aucun");
+  assert.equal(C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 0 }, null).status, "aucun");
+});
+
+test("une attente sans numero reste acceptee sur son metre", () => {
+  // Compatibilite : une attente posee par une version anterieure n'a pas de numero.
+  const metre = metreAvecPostes("m-1", ["01.01", "01.02"]);
+  const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 0 }, metre);
+  assert.equal(cible.status, "ok");
+  assert.equal(cible.row.numero, "01.01");
+});
+
+/* ------------------------------------------------ cas limites d'import */
+
+test("un CSV Windows-1252 se lit sans perdre ses accents", () => {
+  // Ce qu'ecrit un Excel Windows en « CSV (séparateur: point-virgule) ».
+  const octets = Buffer.from("Désignation;Unité;Quantité\nEnduit de façade;m2;120\n", "latin1");
+  const grille = C.parseDelimited(C.decoderTexte(octets));
+  assert.deepEqual(grille[0], ["Désignation", "Unité", "Quantité"]);
+  const lu = C.rowsFromGrid(grille, "csv");
+  assert.equal(lu.rows.length, 1, "en UTF-8 force, l'en-tête était illisible et le fichier entier refusé");
+  assert.equal(lu.rows[0]["Désignation"], "Enduit de façade");
+});
+
+test("un CSV UTF-8, avec ou sans BOM, reste lu en UTF-8", () => {
+  const texte = "Désignation;Unité\nBéton;m3\n";
+  assert.equal(C.decoderTexte(Buffer.from(texte, "utf-8")), texte);
+  assert.equal(C.decoderTexte(Buffer.from(`﻿${texte}`, "utf-8")), texte, "la marque d'ordre est retirée");
+});
+
+test("un fichier UTF-16 exporté par Excel se lit aussi", () => {
+  const texte = "Désignation\tUnité\nBéton\tm3\n";
+  assert.equal(C.decoderTexte(Buffer.from(`﻿${texte}`, "utf16le")), texte);
+});
+
+test("la colonne des prix unitaires n'est jamais une colonne de total", () => {
+  const cas = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix unitaire HTVA", "Prix total HTVA"],
+    ["N°", "Désignation", "Unité", "Quantité", "Prix total HTVA", "Prix unitaire HTVA"],
+    ["N°", "Désignation", "Unité", "Quantité", "Montant HTVA", "P.U. (€)"],
+    ["N°", "Désignation", "Unité", "Quantité", "Somme", "Prix"],
+  ];
+  const attendu = ["Prix unitaire HTVA", "Prix unitaire HTVA", "P.U. (€)", "Prix"];
+  cas.forEach((entetes, index) => {
+    assert.equal(C.headerFor(entetes, "prixUnitaire"), attendu[index], `cas ${index}`);
+  });
+});
+
+test("« Prix unitaire » n'est pas pris pour la colonne des unités", () => {
+  // "un" est un candidat d'unité, et "prix unitaire" le contient : sans exclusion,
+  // un métré sans colonne d'unité chiffrait des « unités » qui étaient des prix.
+  assert.equal(C.headerFor(["N°", "Désignation", "Quantité", "Prix unitaire HTVA"], "unite"), "");
+  assert.equal(C.headerFor(["N°", "Désignation", "Unité", "Quantité", "Prix unitaire"], "unite"), "Unité");
+  assert.equal(C.headerFor(["N°", "Désignation", "U", "Qté", "P.U."], "unite"), "U");
+});
+
+test("une phrase d'introduction n'est pas prise pour la ligne d'en-tête", () => {
+  const grille = [
+    ["Description des travaux et quantités présumées"],
+    [],
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["01.01", "Enduit de façade", "m2", 120],
+  ];
+  assert.equal(C.findHeaderRowIndex(grille), 2);
+  const lu = C.rowsFromGrid(grille, "feuille");
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation", "Unité", "Quantité"]);
+  assert.equal(lu.rows.length, 1);
+  assert.equal(lu.rows[0]["N° poste"], "01.01");
+});
+
+test("un en-tête au libellé long reste reconnu", () => {
+  // L'exclusion porte sur la cellule d'unité ou de quantité, pas sur la description :
+  // « Désignation des ouvrages, fournitures et prestations » est un en-tête courant.
+  const grille = [
+    ["Désignation des ouvrages, fournitures et prestations", "Unité", "Quantité présumée"],
+    ["Enduit de façade", "m2", 120],
+  ];
+  assert.equal(C.findHeaderRowIndex(grille), 0);
+  assert.equal(C.rowsFromGrid(grille, "feuille").rows.length, 1);
+});
+
+test("un en-tête sur une seule cellule ne suffit pas", () => {
+  assert.equal(C.findHeaderRowIndex([["Désignation et quantités"], ["Enduit", "m2", 12]]), -1);
+});
+
+/* --------------------------------------------------- en-tête sur deux lignes */
+
+test("un en-tête réparti sur deux lignes est reconstitué", () => {
+  // Aucune des deux lignes ne porte tous les signaux : la haute a la désignation,
+  // la basse l'unité et la quantité. Le tableau entier était déclaré illisible.
+  const grille = [
+    ["N° poste", "Désignation des travaux", "", ""],
+    ["", "", "Unité", "Quantité"],
+    ["02.01", "Carrelage de sol", "m2", 45],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.equal(lu.headerIndex, 0);
+  assert.equal(lu.headerRows, 2);
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation des travaux", "Unité", "Quantité"]);
+  assert.equal(lu.rows.length, 1);
+  assert.equal(lu.rows[0].__row, 2, "les prix doivent être réécrits sur la bonne ligne du classeur");
+});
+
+test("la précision portée sur la ligne du dessous complète le libellé", () => {
+  const grille = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix"],
+    ["poste", "", "", "présumée", "unitaire HTVA"],
+    ["01.01", "Enduit de façade", "m2", 120, ""],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.equal(lu.headerRows, 2);
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation", "Unité", "Quantité présumée", "Prix unitaire HTVA"]);
+  assert.equal(C.headerFor(lu.headers, "quantite"), "Quantité présumée");
+  assert.equal(lu.rows.length, 1, "la ligne de continuation n'est pas comptée comme un poste");
+});
+
+test("deux colonnes « Prix » sur la ligne haute ne s'écrasent plus", () => {
+  // Sans fusion, les en-têtes sont ["Prix", "Prix"] : la seconde écrase la première
+  // dans l'index des colonnes, et le prix unitaire part dans la colonne des totaux.
+  const grille = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix", "Prix"],
+    ["", "", "", "", "unitaire", "total"],
+    ["01.01", "Enduit de façade", "m2", 120, "", ""],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.deepEqual(lu.headers, ["N°", "Désignation", "Unité", "Quantité", "Prix unitaire", "Prix total"]);
+  assert.equal(C.headerFor(lu.headers, "prixUnitaire"), "Prix unitaire");
+  assert.equal(lu.rows[0].__cols["Prix unitaire"], 4);
+});
+
+test("un titre de lot ou un poste juste sous l'en-tête n'est pas absorbé", () => {
+  const avecLot = C.rowsFromGrid([
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["LOT 1 — DÉMOLITIONS", "", "", ""],
+    ["01.01", "Démontage de la chaudière", "pce", 1],
+  ], "f");
+  assert.equal(avecLot.headerRows, 1);
+  assert.equal(avecLot.rows[0].__lot, "LOT 1 — DÉMOLITIONS", "le titre de lot reste un titre de lot");
+
+  const avecPoste = C.rowsFromGrid([
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["01.01", "Enduit de façade", "m2", 120],
+  ], "f");
+  assert.equal(avecPoste.headerRows, 1);
+  assert.equal(avecPoste.rows.length, 1, "le premier poste n'est pas mangé par l'en-tête");
+});
+
+test("une paire de lignes de postes n'est jamais prise pour un en-tête", () => {
+  const grille = [
+    ["01.01", "Enduit de façade", "m2", 120],
+    ["01.02", "Peinture des murs", "m2", 80],
+  ];
+  assert.equal(C.detecterEnTete(grille).index, -1);
+  assert.equal(C.rowsFromGrid(grille, "f").rows.length, 0);
+});
+
+/* ------------------------------------------------- export / import JSON */
+
+test("l'export ne porte jamais le métré, ni entier ni amputé", () => {
+  const etat = C.normalizeState(C.blankState(CATALOG), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  etat.metre = { ...etat.metre, id: "m-1", fileName: "CSC.xlsx", rows: [{ a: 1 }], analysed: [{ numero: "01.01" }] };
+  const exporte = C.donneesExportables(etat);
+  assert.equal("metre" in exporte, false, "un demi-métré exporté ne peut ni se relire ni se réanalyser");
+  // Tout le reste part, y compris ce qui serait ajouté à l'état plus tard.
+  ["settings", "entrepreneur", "materiaux", "ouvrages", "devisList", "devisCourantId", "chantiers", "mappingCommunes", "catalogVersion", "version"]
+    .forEach((cle) => assert.equal(cle in exporte, true, `${cle} doit être exporté`));
+});
+
+test("importer une bibliothèque ne détruit pas le métré en cours", () => {
+  const courant = { id: "m-1", rows: [{ a: 1 }], analysed: [{ numero: "01.01" }] };
+  assert.equal(C.metreApresImport({ settings: {}, materiaux: [], ouvrages: [] }, courant), courant);
+});
+
+test("un export ancien ne réinstalle son métré que s'il est complet", () => {
+  const courant = { id: "m-1", rows: [{ a: 1 }] };
+  // Ancien format : analysed conservé, rows vidé — inexploitable, on garde l'appareil.
+  const ampute = { metre: { id: "m-0", rows: [], analysed: [{ numero: "01.01" }] } };
+  assert.equal(C.metreApresImport(ampute, courant), courant);
+  // Un métré complet (sauvegarde d'un autre appareil) est repris.
+  const complet = { metre: { id: "m-2", rows: [{ a: 1 }, { a: 2 }], analysed: [] } };
+  assert.equal(C.metreApresImport(complet, courant), complet.metre);
+});
+
+test("un export relu par normalizeState reste un état complet", () => {
+  const etat = C.normalizeState(C.blankState(CATALOG), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  etat.metre = { ...etat.metre, id: "m-1", rows: [{ a: 1 }] };
+  const relu = C.normalizeState(C.donneesExportables(etat), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  assert.deepEqual(relu.metre.rows, [], "sans métré dans le fichier, l'état repart d'un métré vide");
+  assert.equal(Array.isArray(relu.ouvrages), true);
+  assert.equal(Array.isArray(relu.devisList), true);
 });
