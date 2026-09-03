@@ -1879,11 +1879,31 @@ test("posteDeLAlerte retrouve la ligne par son numéro, pas par son rang", () =>
 });
 
 test("l'action disparaît quand elle n'a plus d'objet", () => {
-  const rattache = [{ numero: "IX05.03", ouvrageId: "ouv-9" }];
+  const rattache = [{ numero: "IX05.03", ouvrageId: "ouv-9", unitWarning: false }];
   assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "IX05.03" }, rattache), -1, "poste désormais rattaché");
   assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "ABSENT" }, rattache), -1, "poste disparu");
   assert.equal(C.posteDeLAlerte({ sujet: "", numero: "IX05.03" }, [{ numero: "IX05.03", ouvrageId: "" }]), -1, "autre sujet");
-  // État enregistré par une version antérieure : alertes sans numéro, aucune action.
-  assert.equal(C.posteDeLAlerte({ type: "warning", message: "Poste 01.01 : ..." }, [{ numero: "01.01", ouvrageId: "" }]), -1);
   assert.equal(C.posteDeLAlerte(null, []), -1);
+  assert.equal(C.posteDeLAlerte({ type: "warning", message: "Sans numéro de poste." }, rattache), -1);
+});
+
+test("un ouvrage rattaché à la mauvaise unité reste un ouvrage à créer", () => {
+  // findMatch peut rattacher par le code un ouvrage dont l'unité est incompatible :
+  // ouvrageId est renseigné, mais le poste n'est pas chiffrable pour autant.
+  const analysed = [{ numero: "IX05.09", ouvrageId: "ouv-1", unitWarning: true }];
+  assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "IX05.09" }, analysed), 0);
+});
+
+test("une alerte enregistrée avant le champ « sujet » propose quand même l'action", () => {
+  // Sinon la fonctionnalité restait invisible sur le métré en cours jusqu'à une
+  // réanalyse — précisément le moment où elle sert. Le numéro est repris du message,
+  // et c'est l'état de la ligne qui décide.
+  const analysed = [
+    { numero: "IX05.03", ouvrageId: "", unitWarning: false },
+    { numero: "IX05.10", ouvrageId: "ouv-2", unitWarning: false },
+  ];
+  const ancienne = (message) => ({ type: "warning", message });
+  assert.equal(C.posteDeLAlerte(ancienne("Poste IX05.03 : aucun ouvrage reconnu pour « X »."), analysed), 0);
+  assert.equal(C.posteDeLAlerte(ancienne("Poste IX05.10 : code présent plusieurs fois."), analysed), -1, "poste rattaché");
+  assert.equal(C.posteDeLAlerte(ancienne("Poste INCONNU : aucun ouvrage reconnu."), analysed), -1, "poste absent du métré");
 });

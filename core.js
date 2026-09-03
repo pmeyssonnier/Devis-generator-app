@@ -1438,14 +1438,42 @@
   /*
    * Poste vise par une alerte du tableau de bord. On resout par NUMERO et non par rang :
    * les alertes sont enregistrees avec l'etat, et une reanalyse peut les avoir decalees.
-   * Rend -1 si le poste n'existe plus, ou s'il a entre-temps recu un ouvrage — le
-   * bouton « Créer l'ouvrage » n'a alors plus d'objet et ne doit plus s'afficher.
+   * Rend -1 quand le bouton « Créer l'ouvrage » n'a pas d'objet : poste introuvable,
+   * deja rattache, ou alerte qui ne se regle pas en creant un ouvrage.
+   *
+   * Le numero est repris du message quand le champ manque : les alertes vivent dans
+   * l'etat enregistre, et celles produites avant l'ajout du champ ne portaient que
+   * « Poste X : ... ». Sans ce repli, la fonctionnalite restait invisible sur le metre
+   * en cours jusqu'a une reanalyse — c'est-a-dire precisement quand on en a besoin.
    */
+  const NUMERO_DANS_MESSAGE = /^poste\s+(.+?)\s*:/i;
+
+  function numeroDeLAlerte(alerte) {
+    if (alerte.numero) return String(alerte.numero);
+    const trouve = NUMERO_DANS_MESSAGE.exec(String(alerte.message || "").trim());
+    return trouve ? trouve[1].trim() : "";
+  }
+
   function posteDeLAlerte(alerte, analysed) {
-    if (!alerte || alerte.sujet !== "ouvrage-manquant" || !alerte.numero) return -1;
-    const index = (analysed || []).findIndex((row) => String(row.numero) === String(alerte.numero));
+    if (!alerte) return -1;
+    const numero = numeroDeLAlerte(alerte);
+    if (!numero) return -1;
+    const index = (analysed || []).findIndex((row) => String(row.numero) === String(numero));
     if (index === -1) return -1;
-    return analysed[index].ouvrageId ? -1 : index;
+    const row = analysed[index];
+    // Un ouvrage rattache dont l'unite est incompatible reste un ouvrage a creer :
+    // ouvrageId renseigne ne suffit donc pas a conclure que le probleme est regle.
+    const aCreer = !row.ouvrageId || row.unitWarning;
+    if (!aCreer) return -1;
+    // Champ present (analyse recente) : il tranche. « quantité absente » porte un
+    // sujet vide et ne doit pas proposer de creation, ca ne reglerait rien.
+    if (Object.prototype.hasOwnProperty.call(alerte, "sujet")) {
+      return alerte.sujet === "ouvrage-manquant" ? index : -1;
+    }
+    // Alerte d'avant le champ : c'est l'etat de la ligne qui tranche, plus fiable que
+    // la formulation du message. Une ligne sans ouvrage peut aussi etre signalee pour
+    // sa quantite : la creation reste alors possible, elle ne reglera juste pas tout.
+    return index;
   }
 
   /* ---------------------------------------------------------------- recettes */
