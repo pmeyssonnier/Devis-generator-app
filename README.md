@@ -373,6 +373,18 @@ fonctionne toujours ; l'application signale seulement qu'il faut relancer l'anal
 le rapprocher de la bibliothèque qui vient d'arriver. Un export ancien, lui, contenait
 un métré amputé : il est ignoré au profit de celui de l'appareil, sauf s'il est complet.
 
+## Licence
+
+`UNLICENSED` : aucun droit d'usage n'est accordé à des tiers. C'est sans conséquence
+tant que l'outil sert en interne, mais **la question se posera avant de le distribuer à
+d'autres entrepreneurs** — en l'état, chacun l'utiliserait sans base juridique, et rien
+n'écarte votre responsabilité si un chiffrage se révèle faux.
+
+Trois régimes possibles le jour venu : permissif (MIT — l'outil circule librement, la
+clause « AS IS » écarte la garantie), copyleft (AGPL-3.0 — qui le modifie et le met en
+ligne doit publier ses modifications), ou propriétaire avec une licence écrite, seul
+régime qui permet de le facturer. Décision reportée, volontairement.
+
 ## Limites connues
 
 - Les ouvrages du catalogue de départ combinant plusieurs fournitures (enduit, treillis
