@@ -20,8 +20,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Tourne aussi sur les PR : la suite de tests est visible comme verification
-  # avant fusion, pas seulement rejouee apres coup lors du deploiement.
+  # Tourne aussi sur les PR : les suites de tests sont visibles comme verification
+  # avant fusion, pas seulement rejouees apres coup lors du deploiement.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -31,8 +31,30 @@ jobs:
           node-version: 22
       - run: npm test
 
+  # Les tests unitaires ne voient ni le DOM, ni IndexedDB, ni un telechargement :
+  # deux parcours navigateur completent la couverture la ou elle manquait, sur les
+  # PR comme sur main. Ils n'atteignent aucun reseau — SheetJS est servi depuis
+  # node_modules plutot que depuis le CDN.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
   deploy:
-    needs: test
+    needs: [test, e2e]
     # Jamais sur une PR : seul un push reel (ou un declenchement manuel) sur main
     # publie le site.
     if: github.event_name != 'pull_request'

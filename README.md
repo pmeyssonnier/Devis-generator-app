@@ -269,6 +269,8 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, gel des prix d'un devis, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
+| `test/e2e/` | Parcours navigateur (Playwright), serveur statique et fixtures |
+| `playwright.config.mjs` | Configuration des parcours navigateur |
 
 `core.js` ne touche pas au DOM, ce qui rend la logique testable hors navigateur. La
 frontière suit une règle simple : **tout ce qui transforme des données va dans
@@ -296,12 +298,17 @@ GitHub Pages, que le navigateur affiche bien la dernière version.
 ## Tests
 
 ```bash
-node --test test/core.test.js
+npm test        # logique pure, aucune dépendance à installer
+npm run test:e2e   # deux parcours navigateur (npm ci d'abord)
+npm run test:all   # les deux
 ```
 
-Aucune dépendance à installer. Le déploiement sur GitHub Pages exécute cette suite avant
-de publier, et elle tourne aussi sur chaque pull request : un commit qui la casse n'est
-ni fusionné ni mis en ligne.
+Les deux suites tournent sur chaque pull request et avant chaque déploiement : un commit
+qui casse l'une ou l'autre n'est ni fusionné ni mis en ligne.
+
+`npm test` n'a besoin de rien d'autre que Node. `npm run test:e2e` demande
+`npm ci` puis `npx playwright install chromium` ; dans un environnement qui fournit déjà
+un Chromium, `PLAYWRIGHT_CHROMIUM=/chemin/vers/chrome` évite d'en télécharger un second.
 
 Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 
@@ -324,6 +331,23 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 - **Invariants après remaniement** : après un apprentissage, une fusion ou une
   suppression d'ouvrage, aucun code de métré ne désigne deux ouvrages et aucune
   référence ne pointe vers un ouvrage disparu.
+
+Deux **parcours navigateur** (`test/e2e/`) couvrent ce que la logique pure ne peut pas
+voir — le DOM assemblé, IndexedDB, un vrai téléchargement :
+
+1. **CSV** : importer un métré, se faire refuser l'analyse sans commune, analyser,
+   confirmer les correspondances (les codes deviennent propres à la commune), exporter
+   le récapitulatif et vérifier que la ligne du poste porte un prix et un montant.
+2. **XLSX** : importer un classeur cumulant titre en capitales, phrase d'introduction et
+   en-tête sur deux lignes, **recharger la page**, vérifier que le métré et son classeur
+   reviennent d'IndexedDB, puis compléter le fichier reçu et contrôler que les prix sont
+   écrits dans la colonne « Prix unitaire HTVA » — la colonne voisine, également nommée
+   « Prix », devant rester vide.
+
+Aucun des deux n'atteint le réseau : SheetJS est servi depuis `node_modules` plutôt que
+depuis le CDN, pour qu'un incident chez jsdelivr ne fasse pas rougir la CI. Aucune
+reprise automatique non plus : un parcours qui échoue par intermittence ne prouve rien,
+il doit être vu.
 
 ## Sauvegarde
 
