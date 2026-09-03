@@ -1635,3 +1635,74 @@ test("un en-tête au libellé long reste reconnu", () => {
 test("un en-tête sur une seule cellule ne suffit pas", () => {
   assert.equal(C.findHeaderRowIndex([["Désignation et quantités"], ["Enduit", "m2", 12]]), -1);
 });
+
+/* --------------------------------------------------- en-tête sur deux lignes */
+
+test("un en-tête réparti sur deux lignes est reconstitué", () => {
+  // Aucune des deux lignes ne porte tous les signaux : la haute a la désignation,
+  // la basse l'unité et la quantité. Le tableau entier était déclaré illisible.
+  const grille = [
+    ["N° poste", "Désignation des travaux", "", ""],
+    ["", "", "Unité", "Quantité"],
+    ["02.01", "Carrelage de sol", "m2", 45],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.equal(lu.headerIndex, 0);
+  assert.equal(lu.headerRows, 2);
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation des travaux", "Unité", "Quantité"]);
+  assert.equal(lu.rows.length, 1);
+  assert.equal(lu.rows[0].__row, 2, "les prix doivent être réécrits sur la bonne ligne du classeur");
+});
+
+test("la précision portée sur la ligne du dessous complète le libellé", () => {
+  const grille = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix"],
+    ["poste", "", "", "présumée", "unitaire HTVA"],
+    ["01.01", "Enduit de façade", "m2", 120, ""],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.equal(lu.headerRows, 2);
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation", "Unité", "Quantité présumée", "Prix unitaire HTVA"]);
+  assert.equal(C.headerFor(lu.headers, "quantite"), "Quantité présumée");
+  assert.equal(lu.rows.length, 1, "la ligne de continuation n'est pas comptée comme un poste");
+});
+
+test("deux colonnes « Prix » sur la ligne haute ne s'écrasent plus", () => {
+  // Sans fusion, les en-têtes sont ["Prix", "Prix"] : la seconde écrase la première
+  // dans l'index des colonnes, et le prix unitaire part dans la colonne des totaux.
+  const grille = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix", "Prix"],
+    ["", "", "", "", "unitaire", "total"],
+    ["01.01", "Enduit de façade", "m2", 120, "", ""],
+  ];
+  const lu = C.rowsFromGrid(grille, "f");
+  assert.deepEqual(lu.headers, ["N°", "Désignation", "Unité", "Quantité", "Prix unitaire", "Prix total"]);
+  assert.equal(C.headerFor(lu.headers, "prixUnitaire"), "Prix unitaire");
+  assert.equal(lu.rows[0].__cols["Prix unitaire"], 4);
+});
+
+test("un titre de lot ou un poste juste sous l'en-tête n'est pas absorbé", () => {
+  const avecLot = C.rowsFromGrid([
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["LOT 1 — DÉMOLITIONS", "", "", ""],
+    ["01.01", "Démontage de la chaudière", "pce", 1],
+  ], "f");
+  assert.equal(avecLot.headerRows, 1);
+  assert.equal(avecLot.rows[0].__lot, "LOT 1 — DÉMOLITIONS", "le titre de lot reste un titre de lot");
+
+  const avecPoste = C.rowsFromGrid([
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["01.01", "Enduit de façade", "m2", 120],
+  ], "f");
+  assert.equal(avecPoste.headerRows, 1);
+  assert.equal(avecPoste.rows.length, 1, "le premier poste n'est pas mangé par l'en-tête");
+});
+
+test("une paire de lignes de postes n'est jamais prise pour un en-tête", () => {
+  const grille = [
+    ["01.01", "Enduit de façade", "m2", 120],
+    ["01.02", "Peinture des murs", "m2", 80],
+  ];
+  assert.equal(C.detecterEnTete(grille).index, -1);
+  assert.equal(C.rowsFromGrid(grille, "f").rows.length, 0);
+});

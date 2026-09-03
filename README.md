@@ -77,7 +77,11 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    ou un montant, ni la colonne « Prix unitaire » avec une colonne d'unité, et une
    phrase d'introduction comme « Description des travaux et quantités présumées » n'est
    plus prise pour la ligne d'en-têtes — un en-tête suppose des libellés courts dans
-   des cellules distinctes.
+   des cellules distinctes. Un en-tête réparti sur **deux lignes** est reconstitué,
+   qu'il s'agisse d'un libellé complété en dessous (« Quantité » puis « présumée ») ou
+   de colonnes réparties entre les deux lignes. Sans cela, un tableau dont les deux
+   dernières colonnes s'appellent toutes deux « Prix » sur la ligne haute recevait les
+   prix unitaires dans la colonne des totaux.
 3. **Analyser** : chaque poste est rapproché d'un ouvrage.
    - **Commune renseignée** : d'abord un code déjà appris pour **cette commune**,
      sinon par similarité de libellé (score affiché). Un code du catalogue de
@@ -308,7 +312,9 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
   homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
 - **Cas limites d'import** : CSV Windows-1252 et UTF-16, colonne de prix unitaire
   face à une colonne de total ou de montant, colonne « Prix unitaire » face à une
-  colonne d'unité absente, phrase d'introduction confondue avec la ligne d'en-têtes.
+  colonne d'unité absente, phrase d'introduction confondue avec la ligne d'en-têtes,
+  en-tête réparti sur deux lignes (et titre de lot ou premier poste qui ne doivent
+  surtout pas y être absorbés).
 - **Prix figés** : une ligne de devis chiffrée hier garde son prix quand la
   bibliothèque change, un ouvrage supprimé reste lisible, les totaux se lisent sur les
   valeurs figées et `ecartsDevis` chiffre la dérive sans la subir.
