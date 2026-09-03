@@ -11,7 +11,7 @@
   const CATALOG_VERSION = 1;
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
-  const APP_VERSION = "3.1.0";
+  const APP_VERSION = "3.2.0";
   // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
   // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
   const THEME_KEY = "generateur-devis-theme";
@@ -326,7 +326,16 @@
     $("#alerts-list").innerHTML = alerts.length
       ? alerts
           .slice(0, 60)
-          .map((alert) => `<div class="alert ${alert.type === "danger" ? "danger" : ""}">${esc(alert.message)}</div>`)
+          .map((alert) => {
+            // Un poste sans ouvrage se règle en créant l'ouvrage : autant le proposer
+            // ici plutôt que de renvoyer chercher la ligne dans le tableau du métré.
+            const index = C.posteDeLAlerte(alert, state.metre.analysed);
+            const action =
+              index >= 0
+                ? `<button type="button" class="ghost alert-action" data-metre-create-ouvrage="${index}">Créer l’ouvrage</button>`
+                : "";
+            return `<div class="alert ${alert.type === "danger" ? "danger" : ""}"><span>${esc(alert.message)}</span>${action}</div>`;
+          })
           .join("")
       : `<p class="empty">Aucun problème détecté pour le moment.</p>`;
 
@@ -3064,6 +3073,33 @@
   }
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
+  const aProposVersion = $("#about-version");
+  if (aProposVersion) aProposVersion.textContent = `v${APP_VERSION}`;
+
+  /*
+   * Le service worker sert deja le reseau en premier : un rechargement suffit
+   * normalement. Ce bouton existe pour le cas ou l'ecran affiche encore l'ancienne
+   * version alors qu'une nouvelle vient d'etre publiee — il force la verification
+   * plutot que de laisser chercher comment vider un cache sur telephone.
+   */
+  const boutonMaj = $("#check-update");
+  if (boutonMaj) {
+    boutonMaj.addEventListener("click", async () => {
+      boutonMaj.disabled = true;
+      try {
+        if ("serviceWorker" in navigator) {
+          const inscriptions = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(inscriptions.map((inscription) => inscription.update()));
+        }
+        notify("Vérification effectuée : rechargement…", "info");
+        // Laisse le message s'afficher avant de recharger.
+        setTimeout(() => window.location.reload(), 600);
+      } catch {
+        boutonMaj.disabled = false;
+        notify("Vérification impossible : rechargez la page manuellement.", "danger");
+      }
+    });
+  }
   // L'attribut est deja pose par le script en tete de <head> (evite un flash) :
   // ceci ne fait que synchroniser l'etat visuel des boutons avec ce choix.
   applyTheme(document.documentElement.getAttribute("data-theme") || "auto");

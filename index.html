@@ -557,6 +557,28 @@
               <button class="ghost danger" id="reset-all" type="button">Tout réinitialiser</button>
             </div>
           </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>À propos</h2>
+            </div>
+            <!-- Le numéro figure aussi en haut à droite, mais c'est ici qu'on vient le
+                 chercher : « quelle version ai-je sur ce téléphone ? » est une question
+                 de réglages, pas de barre de titre. -->
+            <dl class="a-propos">
+              <dt>Version installée</dt>
+              <dd id="about-version">—</dd>
+              <dt>Données</dt>
+              <dd>Bibliothèque et devis dans ce navigateur, métrés et classeurs reçus sur cet appareil. Rien n’est envoyé ailleurs.</dd>
+            </dl>
+            <div class="form-actions">
+              <button class="ghost" id="check-update" type="button">Vérifier les mises à jour</button>
+            </div>
+            <small id="about-update-note">
+              L’application se met à jour toute seule au rechargement. Ce bouton force la vérification
+              quand une version vient d’être publiée et que l’écran affiche encore l’ancienne.
+            </small>
+          </section>
         </section>
 
         <!-- Devis client ---------------------------------------------------- -->

@@ -1840,3 +1840,50 @@ test("chaque recette du catalogue est utilisable telle quelle", () => {
     assert.equal(C.recettePourPoste(recette.nom, recette.unite, CATALOG.recettes)?.id, recette.id, recette.id);
   });
 });
+
+/* ---------------------------------------- agir depuis une alerte du tableau de bord */
+
+const alertesDe = (rows) =>
+  C.analyseRows(
+    rows,
+    { poste: "N° poste", description: "Désignation", unite: "Unité", quantite: "Quantité" },
+    [],
+    {},
+  );
+
+test("une alerte porte le poste qu'elle désigne", () => {
+  const { alerts } = alertesDe([
+    { "N° poste": "IX05.03", "Désignation": "Remise en état des joints de dilatation", "Unité": "m", "Quantité": 42, __cols: {} },
+  ]);
+  const manquant = alerts.find((alerte) => alerte.sujet === "ouvrage-manquant");
+  assert.ok(manquant, "un poste sans ouvrage est signalé");
+  assert.equal(manquant.numero, "IX05.03", "sans le numéro, le tableau de bord ne peut rien proposer");
+});
+
+test("seules les alertes que créer un ouvrage résout portent une action", () => {
+  const { alerts } = alertesDe([
+    { "N° poste": "01.01", "Désignation": "Poste sans quantité", "Unité": "m2", "Quantité": "", __cols: {} },
+  ]);
+  const quantite = alerts.find((alerte) => /quantité absente/.test(alerte.message));
+  assert.equal(quantite.sujet, "", "une quantité manquante se corrige dans le fichier reçu, pas en créant un ouvrage");
+});
+
+test("posteDeLAlerte retrouve la ligne par son numéro, pas par son rang", () => {
+  const analysed = [
+    { numero: "01.01", ouvrageId: "ouv-1" },
+    { numero: "IX05.03", ouvrageId: "" },
+  ];
+  assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "IX05.03" }, analysed), 1);
+  // Les alertes sont enregistrées avec l'état : une réanalyse peut avoir tout décalé.
+  assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "IX05.03" }, [{ numero: "X" }, ...analysed]), 2);
+});
+
+test("l'action disparaît quand elle n'a plus d'objet", () => {
+  const rattache = [{ numero: "IX05.03", ouvrageId: "ouv-9" }];
+  assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "IX05.03" }, rattache), -1, "poste désormais rattaché");
+  assert.equal(C.posteDeLAlerte({ sujet: "ouvrage-manquant", numero: "ABSENT" }, rattache), -1, "poste disparu");
+  assert.equal(C.posteDeLAlerte({ sujet: "", numero: "IX05.03" }, [{ numero: "IX05.03", ouvrageId: "" }]), -1, "autre sujet");
+  // État enregistré par une version antérieure : alertes sans numéro, aucune action.
+  assert.equal(C.posteDeLAlerte({ type: "warning", message: "Poste 01.01 : ..." }, [{ numero: "01.01", ouvrageId: "" }]), -1);
+  assert.equal(C.posteDeLAlerte(null, []), -1);
+});

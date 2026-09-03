@@ -229,6 +229,12 @@ POSTE INCONNU
   ↓  saisie à la main
 ```
 
+Le panneau **« Contrôle du dernier métré »** du tableau de bord permet de lancer cette
+chaîne sans revenir au métré : chaque poste non reconnu y porte un bouton **Créer
+l'ouvrage**. Le bouton n'apparaît que là où créer un ouvrage règle le problème — une
+quantité absente se corrige dans le fichier reçu, pas dans la bibliothèque — et
+disparaît dès que le poste est rattaché.
+
 La **recette technique** est le dernier maillon avant la saisie. Elle décrit la
 composition typique d'un ouvrage courant : ses matériaux, leurs quantités par unité, le
 rendement et le matériel. Sur « Remise en état des joints de dilatation en toiture
@@ -343,9 +349,16 @@ que l'application est ouverte. Un choix explicite est mémorisé dans une clé d
 
 ## Version
 
-Le numéro affiché en haut à droite de l'écran suit `package.json`. Il était auparavant
-en pied de barre latérale, où il disparaissait sur téléphone — celle-ci devenant la
-barre de navigation du bas. L'application
+Le numéro est affiché à deux endroits, tous deux alimentés par `package.json` : en haut
+à droite de l'écran, et dans **Paramètres → À propos**, qui est l'endroit où on vient le
+chercher. Il était auparavant en pied de barre latérale, où il disparaissait sur
+téléphone — celle-ci devenant la barre de navigation du bas.
+
+« Vérifier les mises à jour », dans le même panneau, force la vérification du service
+worker puis recharge. L'application se met normalement à jour toute seule (le service
+worker sert le réseau en premier), mais un déploiement qui vient d'être publié peut
+mettre une minute à arriver : le bouton évite d'avoir à chercher comment vider un cache
+sur téléphone. L'application
 n'ayant pas d'outil de build, les deux sont à mettre à jour à la main ensemble
 (`APP_VERSION` dans `app.js`) — utile surtout pour confirmer, une fois déployée sur
 GitHub Pages, que le navigateur affiche bien la dernière version.

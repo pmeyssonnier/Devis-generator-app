@@ -1351,21 +1351,27 @@
       const match = findMatch(base, ouvrages, cache, communeCodes);
 
       const label = `Poste ${numero}`;
-      if (!description) alerts.push({ type: "danger", message: `${label} : description manquante.` });
-      if (!quantiteOk && !pourMemoire) alerts.push({ type: "danger", message: `${label} : quantité absente ou nulle.` });
+      // Chaque alerte porte le poste qu'elle designe : le tableau de bord peut ainsi
+      // proposer d'agir dessus au lieu de renvoyer chercher la ligne dans le metre.
+      // « ouvrage-manquant » distingue le seul cas ou creer un ouvrage repond au
+      // probleme — une quantite absente, elle, se corrige dans le fichier recu.
+      const signale = (type, message, sujet) => alerts.push({ type, message, numero, sujet: sujet || "" });
+      if (!description) signale("danger", `${label} : description manquante.`);
+      if (!quantiteOk && !pourMemoire) signale("danger", `${label} : quantité absente ou nulle.`);
       if (!match.ouvrageId && match.unitWarning) {
-        alerts.push({
-          type: "danger",
-          message: `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
-        });
+        signale(
+          "danger",
+          `${label} : un ouvrage correspond au code, mais son unité est incompatible avec « ${unite} ». À rapprocher manuellement.`,
+          "ouvrage-manquant",
+        );
       } else if (!match.ouvrageId && !pourMemoire) {
-        alerts.push({ type: "warning", message: `${label} : aucun ouvrage reconnu pour « ${description} ».` });
+        signale("warning", `${label} : aucun ouvrage reconnu pour « ${description} ».`, "ouvrage-manquant");
       } else if (match.unitWarning) {
-        alerts.push({ type: "danger", message: `${label} : unité « ${unite} » incompatible avec l’ouvrage retenu.` });
+        signale("danger", `${label} : unité « ${unite} » incompatible avec l’ouvrage retenu.`, "ouvrage-manquant");
       }
       const codeKey = numeroSynthetique ? "" : normalizeRef(numero);
       if (codeKey) {
-        if (seenCodes.has(codeKey)) alerts.push({ type: "warning", message: `${label} : code présent plusieurs fois.` });
+        if (seenCodes.has(codeKey)) signale("warning", `${label} : code présent plusieurs fois.`);
         seenCodes.add(codeKey);
       }
 
@@ -1427,6 +1433,19 @@
     const candidat = importe && importe.metre;
     const complet = candidat && Array.isArray(candidat.rows) && candidat.rows.length > 0;
     return complet ? candidat : courant;
+  }
+
+  /*
+   * Poste vise par une alerte du tableau de bord. On resout par NUMERO et non par rang :
+   * les alertes sont enregistrees avec l'etat, et une reanalyse peut les avoir decalees.
+   * Rend -1 si le poste n'existe plus, ou s'il a entre-temps recu un ouvrage — le
+   * bouton « Créer l'ouvrage » n'a alors plus d'objet et ne doit plus s'afficher.
+   */
+  function posteDeLAlerte(alerte, analysed) {
+    if (!alerte || alerte.sujet !== "ouvrage-manquant" || !alerte.numero) return -1;
+    const index = (analysed || []).findIndex((row) => String(row.numero) === String(alerte.numero));
+    if (index === -1) return -1;
+    return analysed[index].ouvrageId ? -1 : index;
   }
 
   /* ---------------------------------------------------------------- recettes */
@@ -1954,6 +1973,7 @@
     METRE_STATUS_LABELS,
     resumeMetre,
     analyseRows,
+    posteDeLAlerte,
     resoudrePosteEnAttente,
     isForfaitUnit,
     parseDelimited,
