@@ -68,9 +68,16 @@ d'expliquer un montant au client ou au pouvoir adjudicateur.
    jamais employés. Les feuilles multiples sont lues, la feuille
    « récapitulatif » est ignorée, les titres de lot sont rattachés aux postes qui les
    suivent, et les sous-totaux comme les tableaux de rappel en bas de feuille sont
-   écartés.
+   écartés. Un CSV encodé en Windows-1252 (le défaut d'un ancien Excel Windows) est
+   reconnu comme tel : sans cela, « Désignation » devenait « D?signation », plus aucun
+   en-tête n'était identifié et le fichier entier était refusé. Les fichiers UTF-16
+   exportés par Excel le sont aussi.
 2. **Vérifier les colonnes** détectées automatiquement, y compris la colonne de prix
-   unitaire à compléter.
+   unitaire à compléter. La détection ne confond plus un prix unitaire avec un total
+   ou un montant, ni la colonne « Prix unitaire » avec une colonne d'unité, et une
+   phrase d'introduction comme « Description des travaux et quantités présumées » n'est
+   plus prise pour la ligne d'en-têtes — un en-tête suppose des libellés courts dans
+   des cellules distinctes.
 3. **Analyser** : chaque poste est rapproché d'un ouvrage.
    - **Commune renseignée** : d'abord un code déjà appris pour **cette commune**,
      sinon par similarité de libellé (score affiché). Un code du catalogue de
@@ -299,6 +306,9 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 - **Migration de l'état** : une bibliothèque enregistrée par une version antérieure
   (ancien couple `materiauId`/`quantiteMateriau`, `referencesMetre`, communes
   homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
+- **Cas limites d'import** : CSV Windows-1252 et UTF-16, colonne de prix unitaire
+  face à une colonne de total ou de montant, colonne « Prix unitaire » face à une
+  colonne d'unité absente, phrase d'introduction confondue avec la ligne d'en-têtes.
 - **Prix figés** : une ligne de devis chiffrée hier garde son prix quand la
   bibliothèque change, un ouvrage supprimé reste lisible, les totaux se lisent sur les
   valeurs figées et `ecartsDevis` chiffre la dérive sans la subir.

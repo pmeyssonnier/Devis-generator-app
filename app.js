@@ -1445,16 +1445,18 @@
     const html = [`<option value="">—</option>`]
       .concat(list.map((header) => `<option value="${esc(header)}">${esc(header)}</option>`))
       .join("");
+    // headerFor et non findHeader : les selects doivent proposer exactement la colonne
+    // que l'analyse retiendra, exclusions comprises.
     [
-      ["#map-poste", C.HEADER_CANDIDATES.poste],
-      ["#map-description", C.HEADER_CANDIDATES.description],
-      ["#map-unite", C.HEADER_CANDIDATES.unite],
-      ["#map-quantite", C.HEADER_CANDIDATES.quantite],
-      ["#map-prix", C.HEADER_CANDIDATES.prixUnitaire],
-    ].forEach(([selector, candidates]) => {
+      ["#map-poste", "poste"],
+      ["#map-description", "description"],
+      ["#map-unite", "unite"],
+      ["#map-quantite", "quantite"],
+      ["#map-prix", "prixUnitaire"],
+    ].forEach(([selector, cle]) => {
       const select = $(selector);
       select.innerHTML = html;
-      select.value = C.findHeader(list, candidates) || "";
+      select.value = C.headerFor(list, cle) || "";
     });
   }
 
@@ -2751,7 +2753,10 @@
           });
         });
       } else {
-        const parsed = C.rowsFromGrid(C.parseDelimited(await file.text()), file.name);
+        // Pas file.text() : un CSV d'Excel Windows est en general en Windows-1252, et
+        // le decoder en UTF-8 detruit chaque accent — donc l'en-tete, donc le fichier.
+        const texte = C.decoderTexte(await file.arrayBuffer());
+        const parsed = C.rowsFromGrid(C.parseDelimited(texte), file.name);
         rows = parsed.rows;
         skipped = parsed.skipped;
         headers = parsed.headers;

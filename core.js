@@ -1246,10 +1246,10 @@
 
   // Indice de colonne d'une ligne brute, en retombant sur la detection d'en-tete quand
   // le nom mappe n'existe pas dans la feuille dont vient cette ligne.
-  function columnIndex(raw, headerName, candidates) {
+  function columnIndex(raw, headerName, cle) {
     const cols = raw.__cols || {};
     if (headerName && cols[headerName] !== undefined) return cols[headerName];
-    const fallback = findHeader(Object.keys(cols), candidates);
+    const fallback = headerFor(Object.keys(cols), cle);
     return fallback ? cols[fallback] : undefined;
   }
 
@@ -1305,7 +1305,7 @@
     const analysed = rows.map((raw, index) => {
       // Chaque feuille garde ses propres en-tetes : le mapping global ne vaut que pour
       // l'une d'elles, les autres sont resolues ligne par ligne.
-      const champ = (cle) => rowField(raw, mapping[cle], HEADER_CANDIDATES[cle]);
+      const champ = (cle) => rowField(raw, mapping[cle], cle);
       const numeroLu = String(champ("poste") ?? "").trim();
       // Sans numero dans le fichier, on en fabrique un pour l'affichage seulement : il
       // ne doit jamais etre appris ni recherche comme code.
@@ -1358,7 +1358,7 @@
         manual: false,
         sheet: raw.__sheet || "",
         rowIndex: raw.__row,
-        puCol: columnIndex(raw, mapping.prixUnitaire, HEADER_CANDIDATES.prixUnitaire),
+        puCol: columnIndex(raw, mapping.prixUnitaire, "prixUnitaire"),
       };
     });
 
@@ -1425,13 +1425,43 @@
 
   /* ------------------------------------------------------------ lecture metre */
 
-  function findHeader(headers, candidates) {
-    const normalized = headers.map((header) => ({
-      raw: header,
-      normalized: normalizeText(header),
-      // "P.U. (€)" -> "pu" : la ponctuation interne varie d'un cahier a l'autre.
-      compact: normalizeText(header).replace(/[^a-z0-9]/g, ""),
-    }));
+  /*
+   * Un CSV exporte par un Excel Windows est le plus souvent en Windows-1252, pas en
+   * UTF-8 : file.text() y remplace chaque octet accentue par U+FFFD, « Désignation »
+   * devient « D?signation », findHeaderRowIndex ne reconnait plus rien et le fichier
+   * entier est refuse — « Aucune ligne exploitable » sur un metre parfaitement lisible.
+   * On decode donc en UTF-8 strict, et on retombe sur Windows-1252 quand les octets
+   * n'en sont pas : du texte cp1252 accentue n'est jamais de l'UTF-8 valide.
+   */
+  function decoderTexte(octets) {
+    const vue = octets instanceof Uint8Array ? octets : new Uint8Array(octets);
+    // Excel « Texte Unicode (.txt) » ecrit de l'UTF-16 avec marque d'ordre.
+    if (vue[0] === 0xff && vue[1] === 0xfe) return new TextDecoder("utf-16le").decode(vue);
+    if (vue[0] === 0xfe && vue[1] === 0xff) return new TextDecoder("utf-16be").decode(vue);
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(vue);
+    } catch {
+      return new TextDecoder("windows-1252").decode(vue);
+    }
+  }
+
+  // exclusions : mots qui disqualifient une colonne quoi qu'il arrive. Les candidats
+  // vont du plus precis au plus generique, mais findHeader compare passe par passe
+  // (exact, compact, mot, inclusion) : un candidat generique atteint en passe 3
+  // l'emporte donc sur un candidat precis qui n'aurait matche qu'en passe 4. C'est
+  // ainsi que « Prix total HTVA » devenait la colonne des prix unitaires des qu'elle
+  // precedait « Prix unitaire HTVA », et que « Prix unitaire » servait de colonne
+  // d'unite (« un ») dans un metre qui n'en avait pas.
+  function findHeader(headers, candidates, exclusions) {
+    const interdits = exclusions || [];
+    const normalized = headers
+      .map((header) => ({
+        raw: header,
+        normalized: normalizeText(header),
+        // "P.U. (€)" -> "pu" : la ponctuation interne varie d'un cahier a l'autre.
+        compact: normalizeText(header).replace(/[^a-z0-9]/g, ""),
+      }))
+      .filter((entry) => !interdits.some((mot) => entry.normalized.includes(mot)));
     for (const candidate of candidates) {
       const exact = normalized.find((entry) => entry.normalized === candidate);
       if (exact) return exact.raw;
@@ -1460,13 +1490,37 @@
     prixUnitaire: ["pu", "pu htva", "p u", "prix unitaire", "prix", "pu hors tva", "pu e"],
   };
 
+  const HEADER_EXCLUSIONS = {
+    prixUnitaire: ["total", "montant", "somme"],
+    unite: ["prix", "montant", "total"],
+    quantite: ["prix", "montant"],
+  };
+
+  const headerFor = (headers, cle) => findHeader(headers, HEADER_CANDIDATES[cle], HEADER_EXCLUSIONS[cle]);
+
+  /*
+   * Un en-tete est fait de libelles courts places dans des cellules DISTINCTES. Une
+   * phrase d'introduction comme « Description des travaux et quantités présumées »
+   * reunit les deux signaux dans une seule cellule fusionnee : elle passait pour
+   * l'en-tete du tableau, et tout le metre etait ensuite lu sur les mauvaises colonnes.
+   * D'ou les deux exigences : cellules differentes, et cellule d'unite ou de quantite
+   * assez courte pour etre un libelle de colonne et non une phrase.
+   */
+  const LIBELLE_COLONNE_MAX = 24;
+
   function findHeaderRowIndex(grid) {
     return grid.findIndex((line) => {
       const normalized = line.map(normalizeText);
-      const hasDescription = normalized.some((cell) => /designation|description|libelle|travaux|ouvrage/.test(cell));
-      const hasUnit = normalized.some((cell) => cell === "u" || cell === "un" || cell.includes("unite"));
-      const hasQuantity = normalized.some((cell) => cell.includes("quantite") || /^qt/.test(cell));
-      return hasDescription && (hasUnit || hasQuantity);
+      const court = (index) => normalized[index].length <= LIBELLE_COLONNE_MAX;
+      const description = normalized.findIndex((cell) => /designation|description|libelle|travaux|ouvrage/.test(cell));
+      if (description === -1) return false;
+      const unite = normalized.findIndex(
+        (cell, index) => index !== description && court(index) && (cell === "u" || cell === "un" || cell.includes("unite")),
+      );
+      const quantite = normalized.findIndex(
+        (cell, index) => index !== description && court(index) && (cell.includes("quantite") || /^qt/.test(cell)),
+      );
+      return unite !== -1 || quantite !== -1;
     });
   }
 
@@ -1494,10 +1548,10 @@
       return label || `Colonne ${index + 1}`;
     });
     const columns = Object.fromEntries(headers.map((header, index) => [header, index]));
-    const posteHeader = findHeader(headers, HEADER_CANDIDATES.poste);
-    const descriptionHeader = findHeader(headers, HEADER_CANDIDATES.description);
-    const uniteHeader = findHeader(headers, HEADER_CANDIDATES.unite);
-    const quantiteHeader = findHeader(headers, HEADER_CANDIDATES.quantite);
+    const posteHeader = headerFor(headers, "poste");
+    const descriptionHeader = headerFor(headers, "description");
+    const uniteHeader = headerFor(headers, "unite");
+    const quantiteHeader = headerFor(headers, "quantite");
 
     const rows = [];
     let skipped = 0;
@@ -1565,11 +1619,11 @@
    * pas dans cette ligne, on cherche l'equivalent parmi ses propres colonnes. Sans
    * cela, la moitie des colonnes d'un classeur multi-feuilles se vidait.
    */
-  function rowField(raw, header, candidates) {
+  function rowField(raw, header, cle) {
     // Pas d'en-tete choisi (« — ») : choix explicite de l'utilisateur, on le respecte.
     if (!header) return undefined;
     if (Object.prototype.hasOwnProperty.call(raw, header)) return raw[header];
-    const fallback = findHeader(Object.keys(raw.__cols || {}), candidates);
+    const fallback = headerFor(Object.keys(raw.__cols || {}), cle);
     return fallback ? raw[fallback] : undefined;
   }
 
@@ -1676,6 +1730,9 @@
     ouvrageProximityDetail,
     bestOuvrageMatch,
     findHeader,
+    headerFor,
+    HEADER_EXCLUSIONS,
+    decoderTexte,
     findHeaderRowIndex,
     looksLikeCode,
     rowsFromGrid,

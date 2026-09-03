@@ -919,19 +919,19 @@ test("rowField retrouve la colonne d'une ligne dont la feuille a d'autres en-tet
   // poste/description et ceux du Lot 1 pour unite/quantite (premier trouve).
   const mapping = { poste: "Poste", description: "Désignation", unite: "Unité", quantite: "Quantité" };
   const lu = rows.map((raw) => ({
-    numero: String(C.rowField(raw, mapping.poste, C.HEADER_CANDIDATES.poste) ?? "").trim(),
-    description: String(C.rowField(raw, mapping.description, C.HEADER_CANDIDATES.description) ?? "").trim(),
-    unite: String(C.rowField(raw, mapping.unite, C.HEADER_CANDIDATES.unite) ?? "").trim(),
-    quantite: C.parseNumber(C.rowField(raw, mapping.quantite, C.HEADER_CANDIDATES.quantite)),
+    numero: String(C.rowField(raw, mapping.poste, "poste") ?? "").trim(),
+    description: String(C.rowField(raw, mapping.description, "description") ?? "").trim(),
+    unite: String(C.rowField(raw, mapping.unite, "unite") ?? "").trim(),
+    quantite: C.parseNumber(C.rowField(raw, mapping.quantite, "quantite")),
   }));
   assert.deepEqual(lu, [
     { numero: "1.01", description: "Enduit de façade", unite: "m2", quantite: 120 },
     { numero: "2.01", description: "Peinture des murs", unite: "m2", quantite: 80 },
   ]);
   // L'en-tete mappe present mais vide reste vide : pas de repli sur une autre colonne.
-  assert.equal(C.rowField({ Description: "", __cols: { Description: 1, Désignation: 2 }, Désignation: "x" }, "Description", C.HEADER_CANDIDATES.description), "");
+  assert.equal(C.rowField({ Description: "", __cols: { Description: 1, Désignation: 2 }, Désignation: "x" }, "Description", "description"), "");
   // Aucun en-tete choisi (« — ») : choix explicite, pas de detection a la place de l'utilisateur.
-  assert.equal(C.rowField(rows[0], "", C.HEADER_CANDIDATES.poste), undefined);
+  assert.equal(C.rowField(rows[0], "", "poste"), undefined);
 });
 
 test("un poste dont le libelle contient « total » ou « report » n'est pas un sous-total", () => {
@@ -1561,4 +1561,77 @@ test("une attente sans numero reste acceptee sur son metre", () => {
   const cible = C.resoudrePosteEnAttente({ metreId: "m-1", rowIndex: 0 }, metre);
   assert.equal(cible.status, "ok");
   assert.equal(cible.row.numero, "01.01");
+});
+
+/* ------------------------------------------------ cas limites d'import */
+
+test("un CSV Windows-1252 se lit sans perdre ses accents", () => {
+  // Ce qu'ecrit un Excel Windows en « CSV (séparateur: point-virgule) ».
+  const octets = Buffer.from("Désignation;Unité;Quantité\nEnduit de façade;m2;120\n", "latin1");
+  const grille = C.parseDelimited(C.decoderTexte(octets));
+  assert.deepEqual(grille[0], ["Désignation", "Unité", "Quantité"]);
+  const lu = C.rowsFromGrid(grille, "csv");
+  assert.equal(lu.rows.length, 1, "en UTF-8 force, l'en-tête était illisible et le fichier entier refusé");
+  assert.equal(lu.rows[0]["Désignation"], "Enduit de façade");
+});
+
+test("un CSV UTF-8, avec ou sans BOM, reste lu en UTF-8", () => {
+  const texte = "Désignation;Unité\nBéton;m3\n";
+  assert.equal(C.decoderTexte(Buffer.from(texte, "utf-8")), texte);
+  assert.equal(C.decoderTexte(Buffer.from(`﻿${texte}`, "utf-8")), texte, "la marque d'ordre est retirée");
+});
+
+test("un fichier UTF-16 exporté par Excel se lit aussi", () => {
+  const texte = "Désignation\tUnité\nBéton\tm3\n";
+  assert.equal(C.decoderTexte(Buffer.from(`﻿${texte}`, "utf16le")), texte);
+});
+
+test("la colonne des prix unitaires n'est jamais une colonne de total", () => {
+  const cas = [
+    ["N°", "Désignation", "Unité", "Quantité", "Prix unitaire HTVA", "Prix total HTVA"],
+    ["N°", "Désignation", "Unité", "Quantité", "Prix total HTVA", "Prix unitaire HTVA"],
+    ["N°", "Désignation", "Unité", "Quantité", "Montant HTVA", "P.U. (€)"],
+    ["N°", "Désignation", "Unité", "Quantité", "Somme", "Prix"],
+  ];
+  const attendu = ["Prix unitaire HTVA", "Prix unitaire HTVA", "P.U. (€)", "Prix"];
+  cas.forEach((entetes, index) => {
+    assert.equal(C.headerFor(entetes, "prixUnitaire"), attendu[index], `cas ${index}`);
+  });
+});
+
+test("« Prix unitaire » n'est pas pris pour la colonne des unités", () => {
+  // "un" est un candidat d'unité, et "prix unitaire" le contient : sans exclusion,
+  // un métré sans colonne d'unité chiffrait des « unités » qui étaient des prix.
+  assert.equal(C.headerFor(["N°", "Désignation", "Quantité", "Prix unitaire HTVA"], "unite"), "");
+  assert.equal(C.headerFor(["N°", "Désignation", "Unité", "Quantité", "Prix unitaire"], "unite"), "Unité");
+  assert.equal(C.headerFor(["N°", "Désignation", "U", "Qté", "P.U."], "unite"), "U");
+});
+
+test("une phrase d'introduction n'est pas prise pour la ligne d'en-tête", () => {
+  const grille = [
+    ["Description des travaux et quantités présumées"],
+    [],
+    ["N° poste", "Désignation", "Unité", "Quantité"],
+    ["01.01", "Enduit de façade", "m2", 120],
+  ];
+  assert.equal(C.findHeaderRowIndex(grille), 2);
+  const lu = C.rowsFromGrid(grille, "feuille");
+  assert.deepEqual(lu.headers, ["N° poste", "Désignation", "Unité", "Quantité"]);
+  assert.equal(lu.rows.length, 1);
+  assert.equal(lu.rows[0]["N° poste"], "01.01");
+});
+
+test("un en-tête au libellé long reste reconnu", () => {
+  // L'exclusion porte sur la cellule d'unité ou de quantité, pas sur la description :
+  // « Désignation des ouvrages, fournitures et prestations » est un en-tête courant.
+  const grille = [
+    ["Désignation des ouvrages, fournitures et prestations", "Unité", "Quantité présumée"],
+    ["Enduit de façade", "m2", 120],
+  ];
+  assert.equal(C.findHeaderRowIndex(grille), 0);
+  assert.equal(C.rowsFromGrid(grille, "feuille").rows.length, 1);
+});
+
+test("un en-tête sur une seule cellule ne suffit pas", () => {
+  assert.equal(C.findHeaderRowIndex([["Désignation et quantités"], ["Enduit", "m2", 12]]), -1);
 });
