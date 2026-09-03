@@ -2890,7 +2890,7 @@
   });
 
   $("#export-data").addEventListener("click", () => {
-    const payload = { ...state, metre: { ...state.metre, rows: [] } };
+    const payload = C.donneesExportables(state);
     downloadBlob("generateur-devis-donnees.json", new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   });
 
@@ -2903,16 +2903,30 @@
         throw new Error("structure invalide");
       }
       if (!window.confirm("Remplacer la bibliothèque actuelle par le contenu de ce fichier ?")) return;
-      state = normalizeState(imported);
+      const metreCourant = state.metre;
+      const metre = C.metreApresImport(imported, metreCourant);
+      const metreRemplace = metre !== metreCourant;
+      state = normalizeState({ ...imported, metre });
       if (!state.catalogVersion) state.catalogVersion = CATALOG_VERSION;
-      // Le classeur en memoire appartenait a l'ancien etat : sans ceci, « Compléter
-      // le fichier reçu » ecrivait l'analyse importee dans le fichier precedent.
-      sourceArrayBuffer = null;
-      sourceFileName = "";
-      DGStore.clearSource();
+      if (metreRemplace) {
+        // Le classeur en memoire appartenait a l'ancien etat : sans ceci, « Compléter
+        // le fichier reçu » ecrivait l'analyse importee dans le fichier precedent.
+        sourceArrayBuffer = null;
+        sourceFileName = "";
+        DGStore.clearSource();
+      }
       saveState();
       render();
-      notify("Données importées.", "info");
+      // Le metre conserve garde ses postes et ses quantites, mais ses rapprochements
+      // designent les ouvrages de l'ancienne bibliotheque : le dire plutot que de
+      // laisser decouvrir des lignes « ouvrage supprimé ».
+      const metreConserve = !metreRemplace && metreCourant.analysed.length > 0;
+      notify(
+        metreConserve
+          ? "Données importées. Le métré en cours est conservé — relancez l’analyse pour le rapprocher de la bibliothèque importée."
+          : "Données importées.",
+        "info",
+      );
     } catch {
       notify("Ce fichier n’est pas un export de l’application.", "danger");
     } finally {

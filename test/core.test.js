@@ -1706,3 +1706,39 @@ test("une paire de lignes de postes n'est jamais prise pour un en-tête", () => 
   assert.equal(C.detecterEnTete(grille).index, -1);
   assert.equal(C.rowsFromGrid(grille, "f").rows.length, 0);
 });
+
+/* ------------------------------------------------- export / import JSON */
+
+test("l'export ne porte jamais le métré, ni entier ni amputé", () => {
+  const etat = C.normalizeState(C.blankState(CATALOG), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  etat.metre = { ...etat.metre, id: "m-1", fileName: "CSC.xlsx", rows: [{ a: 1 }], analysed: [{ numero: "01.01" }] };
+  const exporte = C.donneesExportables(etat);
+  assert.equal("metre" in exporte, false, "un demi-métré exporté ne peut ni se relire ni se réanalyser");
+  // Tout le reste part, y compris ce qui serait ajouté à l'état plus tard.
+  ["settings", "entrepreneur", "materiaux", "ouvrages", "devisList", "devisCourantId", "chantiers", "mappingCommunes", "catalogVersion", "version"]
+    .forEach((cle) => assert.equal(cle in exporte, true, `${cle} doit être exporté`));
+});
+
+test("importer une bibliothèque ne détruit pas le métré en cours", () => {
+  const courant = { id: "m-1", rows: [{ a: 1 }], analysed: [{ numero: "01.01" }] };
+  assert.equal(C.metreApresImport({ settings: {}, materiaux: [], ouvrages: [] }, courant), courant);
+});
+
+test("un export ancien ne réinstalle son métré que s'il est complet", () => {
+  const courant = { id: "m-1", rows: [{ a: 1 }] };
+  // Ancien format : analysed conservé, rows vidé — inexploitable, on garde l'appareil.
+  const ampute = { metre: { id: "m-0", rows: [], analysed: [{ numero: "01.01" }] } };
+  assert.equal(C.metreApresImport(ampute, courant), courant);
+  // Un métré complet (sauvegarde d'un autre appareil) est repris.
+  const complet = { metre: { id: "m-2", rows: [{ a: 1 }, { a: 2 }], analysed: [] } };
+  assert.equal(C.metreApresImport(complet, courant), complet.metre);
+});
+
+test("un export relu par normalizeState reste un état complet", () => {
+  const etat = C.normalizeState(C.blankState(CATALOG), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  etat.metre = { ...etat.metre, id: "m-1", rows: [{ a: 1 }] };
+  const relu = C.normalizeState(C.donneesExportables(etat), { catalog: CATALOG, uid: uidSequentiel(), onWarning: () => {} });
+  assert.deepEqual(relu.metre.rows, [], "sans métré dans le fichier, l'état repart d'un métré vide");
+  assert.equal(Array.isArray(relu.ouvrages), true);
+  assert.equal(Array.isArray(relu.devisList), true);
+});

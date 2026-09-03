@@ -1382,6 +1382,31 @@
     return { status: "ok", row };
   }
 
+  /*
+   * L'export general emportait le metre courant amoute : « analysed » present,
+   * « rows » vide. Un etat intermediaire inexploitable — on retrouvait les resultats
+   * affiches sans pouvoir relancer l'analyse, faute des lignes du fichier recu.
+   *
+   * Le partage est desormais net : le JSON transporte la memoire de chiffrage
+   * (bibliotheque, reglages, codes par commune, devis, chantiers), le metre courant
+   * et l'historique des metres appartiennent a l'appareil (IndexedDB, avec le
+   * classeur d'origine, que le JSON n'a jamais su porter).
+   */
+  function donneesExportables(etat) {
+    const { metre, ...reste } = etat || {};
+    return reste;
+  }
+
+  // Un export d'aujourd'hui ne porte pas de metre : celui en cours ne doit pas
+  // disparaitre pour autant. Un export ancien en portait un, mais sans ses lignes :
+  // on ne le reprend que s'il est complet, et on garde sinon celui de l'appareil,
+  // qui lui est utilisable.
+  function metreApresImport(importe, courant) {
+    const candidat = importe && importe.metre;
+    const complet = candidat && Array.isArray(candidat.rows) && candidat.rows.length > 0;
+    return complet ? candidat : courant;
+  }
+
   /* ------------------------------------------------------------------ doublons */
 
   function findDuplicates(ouvrages, priceOf) {
@@ -1820,6 +1845,8 @@
     emptyMetre,
     blankState,
     normalizeState,
+    donneesExportables,
+    metreApresImport,
     resolveCommuneKey,
     numeroDevisSuivant,
     contextePrix,

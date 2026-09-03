@@ -310,6 +310,9 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 - **Migration de l'état** : une bibliothèque enregistrée par une version antérieure
   (ancien couple `materiauId`/`quantiteMateriau`, `referencesMetre`, communes
   homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
+- **Export / import JSON** : le fichier ne contient jamais de métré, il contient tout
+  le reste, il se relit en un état complet, et un import ne détruit pas le métré en
+  cours.
 - **Cas limites d'import** : CSV Windows-1252 et UTF-16, colonne de prix unitaire
   face à une colonne de total ou de montant, colonne « Prix unitaire » face à une
   colonne d'unité absente, phrase d'introduction confondue avec la ligne d'en-têtes,
@@ -324,12 +327,23 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 
 ## Sauvegarde
 
-« Exporter les données » produit un JSON contenant la bibliothèque, les paramètres et
-tous les devis. C'est le seul moyen de transférer la mémoire de chiffrage d'un poste à
-un autre, ou de s'en prémunir contre un vidage du navigateur.
+« Exporter les données » produit un JSON contenant la mémoire de chiffrage :
+bibliothèque, réglages, codes appris par commune, devis et chantiers. C'est le seul
+moyen de transférer cette mémoire d'un poste à un autre, ou de s'en prémunir contre un
+vidage du navigateur.
 
-L'historique des métrés et le classeur reçu vivent dans IndexedDB, en dehors de cet
-export : ils restent propres à l'appareil.
+Le métré en cours n'y est pas, et c'est délibéré. L'export en emportait auparavant une
+moitié — les résultats de l'analyse, mais pas les lignes du fichier reçu : de quoi
+relire, pas de quoi réanalyser. Le partage est maintenant net. Le JSON porte ce qui se
+transporte d'un appareil à l'autre ; le métré en cours, l'historique des métrés et le
+classeur d'origine vivent dans IndexedDB et restent propres à l'appareil — le JSON n'a
+de toute façon jamais su porter le classeur.
+
+Conséquence à l'import : le métré en cours **n'est pas écrasé** par le fichier importé.
+Il garde ses postes, ses quantités et son classeur, donc « Compléter le fichier reçu »
+fonctionne toujours ; l'application signale seulement qu'il faut relancer l'analyse pour
+le rapprocher de la bibliothèque qui vient d'arriver. Un export ancien, lui, contenait
+un métré amputé : il est ignoré au profit de celui de l'appareil, sauf s'il est complet.
 
 ## Limites connues
 
