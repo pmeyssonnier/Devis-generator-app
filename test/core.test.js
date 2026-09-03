@@ -1391,3 +1391,125 @@ test("fusionner deux ouvrages remappe les lignes de TOUS les devis", () => {
     "aucune ligne ne reste sur l'ouvrage fusionne, dans aucun devis",
   );
 });
+
+/* -------------------------------------------------------------- prix figés */
+
+const OUVRAGE_FIGE = { id: "o1", nom: "Carrelage de sol", unite: "m2", heures: 0.55, materiel: 5, composants: [{ materiauId: "m1", quantite: 1 }] };
+const MATERIAUX_FIGE = [{ id: "m1", nom: "Grès cérame", unite: "m2", prix: 26 }];
+const REGLAGES_FIGE = { coutHoraire: 47.5, fraisGeneraux: 12, fraisChantier: 5, imprevus: 4, marge: 18 };
+
+test("contextePrix photographie ce qui, dans les reglages, fait le prix", () => {
+  const contexte = C.contextePrix(REGLAGES_FIGE);
+  assert.equal(contexte.coutHoraire, 47.5);
+  assert.equal(contexte.marge, 18);
+  assert.equal(contexte.formuleK, "additive");
+  assert.equal(contexte.coefficientK, C.coefficientK(REGLAGES_FIGE));
+  const multi = C.contextePrix({ ...REGLAGES_FIGE, formuleK: "multiplicative" });
+  assert.equal(multi.formuleK, "multiplicative");
+  assert.ok(multi.coefficientK > contexte.coefficientK);
+  // Des reglages absents ne doivent jamais produire NaN dans un document contractuel.
+  const vide = C.contextePrix(undefined);
+  assert.equal(vide.coutHoraire, 0);
+  assert.equal(Number.isFinite(vide.coefficientK), true);
+});
+
+test("une ligne figee garde libelle, unite et prix, meme si l'ouvrage change ensuite", () => {
+  const calcul = C.calculateOuvrage(OUVRAGE_FIGE, REGLAGES_FIGE, MATERIAUX_FIGE);
+  const ligne = C.figerLigneDevis({ id: "l1", ouvrageId: "o1", quantite: 20 }, OUVRAGE_FIGE, calcul);
+  assert.equal(ligne.nom, "Carrelage de sol");
+  assert.equal(ligne.unite, "m2");
+  assert.equal(ligne.puHtva, C.roundMoney(calcul.vente));
+  assert.equal(ligne.coutDirect, C.roundMoney(calcul.direct));
+
+  // L'ouvrage evolue : la ligne deja figee ne bouge pas.
+  const apres = C.calculateOuvrage({ ...OUVRAGE_FIGE, heures: 0.9 }, REGLAGES_FIGE, MATERIAUX_FIGE);
+  assert.ok(C.roundMoney(apres.vente) > ligne.puHtva);
+  assert.equal(ligne.puHtva, C.roundMoney(calcul.vente), "la ligne figee est inchangee");
+});
+
+test("un ouvrage supprime ne rend pas la ligne illisible", () => {
+  const ligne = C.figerLigneDevis({ id: "l1", ouvrageId: "disparu", quantite: 3, nom: "Plinthes", unite: "m", puHtva: 20.11 }, null, null);
+  assert.equal(ligne.nom, "Plinthes");
+  assert.equal(ligne.puHtva, 20.11);
+  const sansRien = C.figerLigneDevis({ id: "l2", ouvrageId: "", quantite: 1 }, null, null);
+  assert.equal(sansRien.nom, "Ouvrage supprimé");
+  assert.equal(sansRien.puHtva, 0);
+});
+
+test("les totaux d'un devis sont lus sur les prix figes, jamais recalcules", () => {
+  const devis = {
+    tva: 21,
+    lignes: [
+      { id: "a", puHtva: 20.11, quantite: 20 },
+      { id: "b", puHtva: 90.52, quantite: 4 },
+    ],
+  };
+  const totaux = C.totauxDevis(devis);
+  assert.equal(totaux.ht, 764.28, "20 × 20,11 + 4 × 90,52");
+  assert.equal(totaux.tva, 160.5);
+  assert.equal(totaux.ttc, 924.78);
+  assert.deepEqual(C.totauxDevis({ tva: 0, lignes: [] }), { ht: 0, tva: 0, ttc: 0 });
+  // TVA a 0 % (regime cocontractant) : le total TVAC vaut le HTVA.
+  assert.equal(C.totauxDevis({ tva: 0, lignes: [{ puHtva: 100, quantite: 2 }] }).ttc, 200);
+});
+
+test("ecartsDevis chiffre la difference avec la bibliotheque d'aujourd'hui", () => {
+  const devis = {
+    lignes: [
+      { id: "a", ouvrageId: "o1", puHtva: 20.11, quantite: 20 },
+      { id: "b", ouvrageId: "o2", puHtva: 50, quantite: 2 },
+      { id: "c", ouvrageId: "disparu", puHtva: 12, quantite: 1 },
+    ],
+  };
+  const prix = { o1: 23.11, o2: 50 };
+  const ecarts = C.ecartsDevis(devis, (id) => (id in prix ? prix[id] : null));
+
+  assert.equal(ecarts.nbModifiees, 1, "seule la ligne dont le prix a bouge compte");
+  assert.equal(ecarts.ecartTotal, 60, "3,00 € × 20");
+  assert.equal(ecarts.lignes[1].ecart, 0, "prix identique : aucun ecart");
+  assert.equal(ecarts.lignes[2].introuvable, true);
+  assert.equal(ecarts.lignes[2].puActuel, null);
+  assert.equal(
+    ecarts.lignes[2].ecart,
+    0,
+    "un ouvrage disparu est un autre probleme : il ne gonfle pas le total des ecarts",
+  );
+});
+
+test("les lignes d'un devis anterieur au figeage sont figees au prix du jour", () => {
+  const etat = normaliser({
+    settings: REGLAGES_FIGE,
+    materiaux: MATERIAUX_FIGE,
+    ouvrages: [OUVRAGE_FIGE],
+    devis: { client: "Dupont", tva: 21, lignes: [{ ouvrageId: "o1", quantite: 20 }] },
+  });
+  const ligne = etat.devisList[0].lignes[0];
+  const attendu = C.roundMoney(C.calculateOuvrage(OUVRAGE_FIGE, REGLAGES_FIGE, MATERIAUX_FIGE).vente);
+  assert.equal(ligne.puHtva, attendu);
+  assert.equal(ligne.nom, "Carrelage de sol");
+  assert.equal(ligne.unite, "m2");
+  assert.equal(etat.devisList[0].statut, "brouillon");
+  assert.equal(etat.devisList[0].contexte.coutHoraire, 47.5);
+});
+
+test("un devis deja fige n'est pas repricé par une relecture de l'etat", () => {
+  const etat = normaliser({
+    settings: { ...REGLAGES_FIGE, coutHoraire: 80 },
+    materiaux: MATERIAUX_FIGE,
+    ouvrages: [OUVRAGE_FIGE],
+    devisList: [
+      {
+        id: "d1",
+        numero: "2026-001",
+        statut: "fige",
+        contexte: { coutHoraire: 47.5, coefficientK: 1.39, formuleK: "additive", fraisGeneraux: 12, fraisChantier: 5, imprevus: 4, marge: 18 },
+        lignes: [{ id: "l1", ouvrageId: "o1", quantite: 20, nom: "Carrelage de sol", unite: "m2", puHtva: 79.4, coutDirect: 57.13 }],
+      },
+    ],
+  });
+  const devis = etat.devisList[0];
+  assert.equal(devis.statut, "fige");
+  assert.equal(devis.lignes[0].puHtva, 79.4, "le coût horaire passé à 80 ne touche pas un devis figé");
+  assert.equal(devis.contexte.coutHoraire, 47.5, "le contexte d'origine est conservé");
+  assert.equal(C.totauxDevis(devis).ht, 1588);
+});

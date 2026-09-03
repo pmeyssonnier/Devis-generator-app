@@ -1802,3 +1802,83 @@ tr.flag-detail-row.danger td {
     min-height: 44px;
   }
 }
+
+/* --------------------------------------------------- prix figés (snapshot) */
+
+.devis-statut-zone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.statut {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.statut.fige {
+  background: var(--soft);
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+
+.devis-contexte {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Écart entre le montant chiffré et celui d'aujourd'hui : une information, pas une
+   erreur — d'où le ton d'avertissement plutôt que celui d'une alerte. */
+.devis-ecart {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warn);
+  border-radius: 6px;
+  background: var(--warn-soft-bg);
+  color: var(--warn-soft-ink);
+  font-size: 13px;
+}
+
+.devis-ecart[hidden] {
+  display: none;
+}
+
+.devis-ecart button {
+  margin-left: auto;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .devis-ecart button {
+    min-height: 44px;
+  }
+}
+
+/* Prix du jour rappelé sous le prix figé, quand les deux diffèrent. */
+td .prix-actuel {
+  display: block;
+  margin-top: 3px;
+  color: var(--warn-soft-ink);
+  font-size: 11px;
+}
+
+td .ligne-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}

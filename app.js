@@ -11,7 +11,7 @@
   const CATALOG_VERSION = 1;
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
-  const APP_VERSION = "2.1.0";
+  const APP_VERSION = "2.2.0";
   // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
   // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
   const THEME_KEY = "generateur-devis-theme";
@@ -690,17 +690,36 @@
     return state.devisList.find((devis) => devis.id === state.devisCourantId) || state.devisList[0];
   }
 
-  function totauxDevis(devis) {
-    const ht = devis.lignes.reduce((somme, ligne) => {
-      const ouvrage = ouvrageById(ligne.ouvrageId);
-      return ouvrage ? somme + priceOf(ouvrage).vente * ligne.quantite : somme;
-    }, 0);
-    const tva = ht * (Number(devis.tva ?? state.settings.tva) / 100);
-    return { ht, tva, ttc: ht + tva };
-  }
+  // Totaux lus sur les prix figes de chaque ligne, jamais recalcules : c'est le
+  // montant qui a ete remis au client.
+  const totauxDevis = (devis) => C.totauxDevis(devis);
 
   function calculateDevisTotals() {
     return totauxDevis(devisCourant());
+  }
+
+  // Prix de vente actuel d'un ouvrage, ou null s'il n'est plus dans la bibliotheque.
+  function venteActuelle(ouvrageId) {
+    const ouvrage = ouvrageById(ouvrageId);
+    return ouvrage ? priceOf(ouvrage).vente : null;
+  }
+
+  // Fige une ligne au prix du jour : appele a l'ajout et a la modification d'une
+  // ligne, jamais a l'affichage.
+  function figerLigne(ligne) {
+    const ouvrage = ouvrageById(ligne.ouvrageId);
+    return C.figerLigneDevis(ligne, ouvrage, ouvrage ? priceOf(ouvrage) : null);
+  }
+
+  // Un devis fige est le document remis au client : il ne se modifie plus.
+  function refuserSiFige(devis) {
+    if (devis.statut !== "fige") return false;
+    notify(
+      `Le devis « ${devis.numero} » est figé : son montant est celui remis au client. ` +
+        "Dupliquez-le pour établir une révision, ou rouvrez-le en brouillon.",
+      "danger",
+    );
+    return true;
   }
 
   function renderDevis() {
@@ -741,23 +760,56 @@
       })
       .join("");
 
+    // Statut, réglages figés et écart avec la bibliothèque d'aujourd'hui.
+    const fige = devis.statut === "fige";
+    const badge = $("#devis-statut");
+    badge.textContent = fige ? "figé" : "brouillon";
+    badge.className = `statut${fige ? " fige" : ""}`;
+    $("#figer-devis").textContent = fige ? "Rouvrir en brouillon" : "Figer le devis";
+    const contexte = devis.contexte || {};
+    $("#devis-contexte").textContent = devis.lignes.length
+      ? `Prix arrêtés avec : coût horaire ${euro.format(contexte.coutHoraire || 0)}, K ${number.format(
+          contexte.coefficientK || 0,
+        )} (${contexte.formuleK === "multiplicative" ? "multiplicative" : "additive"}), TVA ${number.format(devis.tva)} %.`
+      : "";
+
+    const ecarts = C.ecartsDevis(devis, venteActuelle);
+    const parLigne = new Map(ecarts.lignes.map((ligne) => [ligne.id, ligne]));
+    const zoneEcart = $("#devis-ecart");
+    // Un devis figé ne propose pas d'actualisation : c'est justement ce qu'on lui
+    // interdit. L'information reste affichée, sans le bouton.
+    zoneEcart.hidden = !ecarts.nbModifiees;
+    if (ecarts.nbModifiees) {
+      const signe = ecarts.ecartTotal > 0 ? "+" : "";
+      $("#devis-ecart-texte").textContent = fige
+        ? `${ecarts.nbModifiees} ligne(s) ne valent plus le même prix dans la bibliothèque d’aujourd’hui (${signe}${euro.format(
+            ecarts.ecartTotal,
+          )}). Ce devis reste au montant remis au client.`
+        : `${ecarts.nbModifiees} ligne(s) ont changé de prix dans la bibliothèque depuis leur ajout (${signe}${euro.format(
+            ecarts.ecartTotal,
+          )} sur le total).`;
+      $("#actualiser-devis").hidden = fige;
+    }
+
     const orphan = devis.lignes.filter((ligne) => !ouvrageById(ligne.ouvrageId)).length;
     $("#devis-lines").innerHTML = devis.lignes.length
       ? devis.lignes
           .map((ligne) => {
-            const ouvrage = ouvrageById(ligne.ouvrageId);
-            if (!ouvrage) {
-              return `<tr class="row-warning">
-                <td colspan="4">Ligne rattachée à un ouvrage supprimé.</td>
-                <td><button class="delete-button" data-delete-ligne="${ligne.id}" type="button">Retirer</button></td>
-              </tr>`;
-            }
-            const calc = priceOf(ouvrage);
+            // Le libellé, l'unité et le prix viennent de la ligne, pas de la
+            // bibliothèque : un ouvrage renommé, repricé ou supprimé depuis ne change
+            // plus un devis déjà établi.
+            const ecart = parLigne.get(ligne.id) || {};
+            const notes = [];
+            if (ecart.introuvable) notes.push(`<small class="ligne-note">ouvrage retiré de la bibliothèque</small>`);
+            const derive =
+              !ecart.introuvable && ecart.puActuel !== undefined && ecart.puActuel !== ligne.puHtva
+                ? `<small class="prix-actuel">aujourd’hui ${euro.format(ecart.puActuel)}</small>`
+                : "";
             return `<tr>
-              <td>${esc(ouvrage.nom)}</td>
-              <td>${number.format(ligne.quantite)} ${esc(ouvrage.unite)}</td>
-              <td>${euro.format(calc.vente)}</td>
-              <td>${euro.format(calc.vente * ligne.quantite)}</td>
+              <td>${esc(ligne.nom)}${notes.join("")}</td>
+              <td>${number.format(ligne.quantite)} ${esc(ligne.unite)}</td>
+              <td>${euro.format(ligne.puHtva)}${derive}</td>
+              <td>${euro.format(C.roundMoney(ligne.puHtva * ligne.quantite))}</td>
               <td>
                 <div class="card-actions">
                   <button class="edit-button" data-edit-ligne="${ligne.id}" type="button">Éditer</button>
@@ -1040,8 +1092,21 @@
     return Boolean(row.ouvrageId) && row.quantiteOk && !row.unitWarning;
   }
 
+  /*
+   * Prix unitaire d'un poste. Un metre rouvert depuis l'historique est fige : son
+   * montant est celui du jour ou il a ete rendu au pouvoir adjudicateur. Le rouvrir
+   * trois mois plus tard, apres un changement de prix matiere, ne doit pas afficher
+   * — ni reexporter — d'autres montants que ceux remis.
+   */
+  function metreRowPu(row) {
+    if (state.metre.fige) return Number(row.puHtva) || 0;
+    const ouvrage = ouvrageById(row.ouvrageId);
+    return ouvrage ? priceOf(ouvrage).vente : 0;
+  }
+
   function metreRowPrice(row) {
     if (row.unitWarning) return 0;
+    if (state.metre.fige) return metreRowPu(row) * (Number(row.quantite) || 0);
     const ouvrage = ouvrageById(row.ouvrageId);
     return ouvrage ? priceOf(ouvrage).vente * (Number(row.quantite) || 0) : 0;
   }
@@ -1205,6 +1270,18 @@
         : analysed.length
           ? `${state.metre.fileName} · ${analysed.length} poste(s) analysé(s)`
           : `${state.metre.fileName} · ${state.metre.rows.length} poste(s) lu(s), analyse à lancer`;
+    }
+
+    const bandeauFige = $("#metre-fige");
+    if (bandeauFige) {
+      bandeauFige.hidden = !(state.metre.fige && analysed.length);
+      if (!bandeauFige.hidden) {
+        const contexte = state.metre.contexte || {};
+        $("#metre-fige-texte").textContent =
+          `Métré rouvert depuis l’historique : les montants sont ceux du jour où il a été rendu` +
+          `${contexte.coutHoraire ? ` (coût horaire ${euro.format(contexte.coutHoraire)}, K ${number.format(contexte.coefficientK || 0)})` : ""}, ` +
+          "pas ceux de la bibliothèque d’aujourd’hui.";
+      }
     }
 
     const blocArchives = $("#metre-archives-bloc");
@@ -1413,6 +1490,9 @@
 
     const { analysed, alerts } = C.analyseRows(state.metre.rows, mapping, state.ouvrages, communeCodes);
     state.metre.analysed = analysed;
+    // Une analyse repart des prix du jour : elle n'est plus une photographie.
+    state.metre.fige = false;
+    state.metre.contexte = C.contextePrix(state.settings);
     state.metre.alerts = alerts;
     saveState();
     render();
@@ -1544,8 +1624,14 @@
       date: Date.now(),
       resume: C.resumeMetre(state.metre, metreRowPrice),
       // Copie : l'etat continue de vivre apres l'archivage, l'archive doit rester
-      // celle du moment ou elle a ete ecrite.
-      metre: JSON.parse(JSON.stringify(state.metre)),
+      // celle du moment ou elle a ete ecrite — prix compris, d'ou le puHtva pose sur
+      // chaque ligne. Sans lui, rouvrir un metre rendu en septembre l'afficherait aux
+      // prix de decembre.
+      metre: {
+        ...JSON.parse(JSON.stringify(state.metre)),
+        contexte: state.metre.contexte || C.contextePrix(state.settings),
+        analysed: state.metre.analysed.map((row) => ({ ...row, puHtva: C.roundMoney(metreRowPu(row)) })),
+      },
       source: sourceArrayBuffer || null,
     };
     if (!(await DGStore.saveArchive(entree))) return;
@@ -1562,6 +1648,8 @@
     }
     await archiverMetreCourant();
     state.metre = normalizeState({ ...state, metre: archive.metre }).metre;
+    // Un metre rouvert est une photographie : montants et export restent ceux rendus.
+    state.metre.fige = true;
     sourceArrayBuffer = archive.source || null;
     sourceFileName = sourceArrayBuffer ? archive.fileName || "" : "";
     creatingOuvrageForMetreRow = -1;
@@ -1685,7 +1773,7 @@
         return;
       }
       const address = XLSX.utils.encode_cell({ r: row.rowIndex, c: row.puCol });
-      sheet[address] = { t: "n", v: C.roundMoney(priceOf(ouvrage).vente), z: "#,##0.00" };
+      sheet[address] = { t: "n", v: C.roundMoney(metreRowPu(row)), z: "#,##0.00" };
       written += 1;
     });
 
@@ -1746,7 +1834,7 @@
             row.quantite,
             ouvrage?.nom || "",
             utilisable ? C.roundMoney(row.confidence) : "",
-            utilisable ? C.roundMoney(priceOf(ouvrage).vente) : "",
+            utilisable ? C.roundMoney(metreRowPu(row)) : "",
             C.roundMoney(metreRowPrice(row)),
             C.METRE_STATUS_LABELS[C.metreRowStatus(row, Boolean(ouvrage))],
           ];
@@ -1782,21 +1870,30 @@
       [],
       ["Devis", devisCourant().numero],
       ["Date", devisCourant().date],
+      ["Statut", devisCourant().statut === "fige" ? "Figé" : "Brouillon"],
       ["Client", devisCourant().client],
       ["Adresse du chantier", devisCourant().adresse],
       ["Objet", devisCourant().objet],
       [],
+      // Les prix exportes sont ceux figes sur chaque ligne, pas ceux de la
+      // bibliotheque au moment de l'export : c'est le meme document a chaque fois.
       ["Ouvrage", "Unité", "Quantité", "PU HTVA", "Total HTVA"],
-      ...devisCourant().lignes.map((ligne) => {
-        const ouvrage = ouvrageById(ligne.ouvrageId);
-        if (!ouvrage) return ["Ouvrage supprimé", "", ligne.quantite, "", ""];
-        const calc = priceOf(ouvrage);
-        return [ouvrage.nom, ouvrage.unite, ligne.quantite, C.roundMoney(calc.vente), C.roundMoney(calc.vente * ligne.quantite)];
-      }),
+      ...devisCourant().lignes.map((ligne) => [
+        ligne.nom,
+        ligne.unite,
+        ligne.quantite,
+        ligne.puHtva,
+        C.roundMoney(ligne.puHtva * ligne.quantite),
+      ]),
       [],
       ["Total HTVA", "", "", "", C.roundMoney(totals.ht)],
       [`TVA ${number.format(devisCourant().tva)} %`, "", "", "", C.roundMoney(totals.tva)],
       ["Total TVAC", "", "", "", C.roundMoney(totals.ttc)],
+      [],
+      ["Prix arrêtés avec"],
+      ["Coût horaire", C.roundMoney(devisCourant().contexte?.coutHoraire || 0)],
+      ["Coefficient K", devisCourant().contexte?.coefficientK || 0],
+      ["Formule K", devisCourant().contexte?.formuleK === "multiplicative" ? "multiplicative" : "additive"],
     ];
   }
 
@@ -2030,6 +2127,10 @@
       adresse: modele?.adresse || "",
       objet: modele?.objet || "",
       tva: modele ? modele.tva : Number(state.settings.tva) || 21,
+      // Un duplicata repart en brouillon : c'est une nouvelle proposition, meme si
+      // elle herite des prix arretes de l'original.
+      statut: "brouillon",
+      contexte: modele ? modele.contexte : C.contextePrix(state.settings),
       // Copie des lignes : dupliquer un devis ne doit pas partager ses lignes avec
       // l'original, sinon modifier l'un modifierait l'autre.
       lignes: (modele?.lignes || []).map((ligne) => ({ ...ligne, id: uid() })),
@@ -2045,6 +2146,48 @@
 
   $("#nouveau-devis").addEventListener("click", () => nouveauDevis(null));
 
+  $("#figer-devis").addEventListener("click", () => {
+    const devis = devisCourant();
+    if (devis.statut === "fige") {
+      if (!window.confirm(`Rouvrir « ${devis.numero} » en brouillon ? Ses prix redeviennent modifiables.`)) return;
+      devis.statut = "brouillon";
+      notify(`Devis « ${devis.numero} » rouvert en brouillon.`, "info");
+    } else {
+      if (!devis.lignes.length) {
+        notify("Ajoutez au moins une ligne avant de figer ce devis.", "danger");
+        return;
+      }
+      if (
+        !window.confirm(
+          `Figer « ${devis.numero} » ? Son montant ne bougera plus, quoi qu'il arrive ensuite aux prix de la bibliothèque.`,
+        )
+      )
+        return;
+      devis.statut = "fige";
+      notify(`Devis « ${devis.numero} » figé : ${euro.format(totauxDevis(devis).ttc)} TVAC.`, "info");
+    }
+    saveState();
+    render();
+  });
+
+  // Refige toutes les lignes aux prix d'aujourd'hui : c'est le passage explicite du
+  // « montant chiffré » au « montant si je le refaisais maintenant ».
+  $("#actualiser-devis").addEventListener("click", () => {
+    const devis = devisCourant();
+    if (refuserSiFige(devis)) return;
+    const avant = totauxDevis(devis).ht;
+    devis.lignes = devis.lignes.map((ligne) => (ouvrageById(ligne.ouvrageId) ? figerLigne(ligne) : ligne));
+    devis.contexte = C.contextePrix(state.settings);
+    const apres = totauxDevis(devis).ht;
+    saveState();
+    render();
+    const ecart = C.roundMoney(apres - avant);
+    notify(
+      `Prix actualisés : total HTVA ${euro.format(avant)} → ${euro.format(apres)} (${ecart >= 0 ? "+" : ""}${euro.format(ecart)}).`,
+      "info",
+    );
+  });
+
   $("#edit-devis-meta").addEventListener("click", () => {
     editingDevisMeta = true;
     updateDevisMetaMode();
@@ -2057,14 +2200,20 @@
       notify("Sélectionnez un ouvrage.", "danger");
       return;
     }
+    const devis = devisCourant();
+    if (refuserSiFige(devis)) return;
     const payload = { ouvrageId: data.ouvrage, quantite: Number(data.quantite) || 0 };
     if (editingDevisLineId) {
-      const ligne = devisCourant().lignes.find((item) => item.id === editingDevisLineId);
-      if (ligne) Object.assign(ligne, payload);
+      const ligne = devis.lignes.find((item) => item.id === editingDevisLineId);
+      // Le prix est arrete a cet instant : c'est ce montant, et lui seul, qui vaudra
+      // engagement, quoi qu'il advienne ensuite de la bibliotheque.
+      if (ligne) Object.assign(ligne, figerLigne({ ...ligne, ...payload }));
       editingDevisLineId = "";
     } else {
-      devisCourant().lignes.push({ id: uid(), ...payload });
+      devis.lignes.push(figerLigne({ id: uid(), ...payload }));
     }
+    // Les reglages en vigueur suivent le devis tant qu'il est en brouillon.
+    devis.contexte = C.contextePrix(state.settings);
     event.currentTarget.reset();
     updateDevisLineMode();
     saveState();
@@ -2339,6 +2488,7 @@
       C.supprimerOuvrage(state, data.deleteOuvrage);
       if (editingOuvrageId === data.deleteOuvrage) editingOuvrageId = "";
     } else if (data.deleteLigne) {
+      if (refuserSiFige(devisCourant())) return;
       devisCourant().lignes = devisCourant().lignes.filter((ligne) => ligne.id !== data.deleteLigne);
       if (editingDevisLineId === data.deleteLigne) editingDevisLineId = "";
     } else {
@@ -2459,6 +2609,7 @@
   }
 
   function startDevisLineEdit(id) {
+    if (refuserSiFige(devisCourant())) return;
     const ligne = devisCourant().lignes.find((item) => item.id === id);
     if (!ligne) return;
     editingDevisLineId = id;
@@ -2638,6 +2789,23 @@
   });
 
   $("#toast-close").addEventListener("click", hideToast);
+
+  // Repasser un metre archive aux prix du jour : l'autre lecture, celle du « combien
+  // coûterait ce marché maintenant ».
+  $("#recalculer-metre").addEventListener("click", () => {
+    if (!state.metre.fige) return;
+    const avant = state.metre.analysed.reduce((somme, row) => somme + metreRowPrice(row), 0);
+    state.metre.fige = false;
+    state.metre.contexte = C.contextePrix(state.settings);
+    const apres = state.metre.analysed.reduce((somme, row) => somme + metreRowPrice(row), 0);
+    saveState();
+    render();
+    const ecart = C.roundMoney(apres - avant);
+    notify(
+      `Métré recalculé aux prix actuels : ${euro.format(avant)} → ${euro.format(apres)} (${ecart >= 0 ? "+" : ""}${euro.format(ecart)}).`,
+      "info",
+    );
+  });
 
   $("#analyse-metre").addEventListener("click", analyseMetre);
   $("#export-metre-source").addEventListener("click", exportMetreSource);

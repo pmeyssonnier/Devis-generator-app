@@ -831,6 +831,88 @@
     return best;
   }
 
+  /* ------------------------------------------------------------ prix figes */
+
+  /*
+   * Un devis remis au client est un engagement, pas une requete sur la bibliotheque
+   * du jour. Sans photographie, modifier trois mois plus tard le prix d'un materiau,
+   * un rendement ou le coefficient K changeait retroactivement le montant d'un devis
+   * deja envoye — et personne n'en etait averti.
+   *
+   * On fige donc deux choses : le contexte de prix (ce qui, dans les reglages,
+   * determine une vente) et, sur chaque ligne, le prix arrete. La bibliotheque peut
+   * ensuite evoluer librement.
+   */
+  function contextePrix(settings) {
+    const source = settings || {};
+    return {
+      coutHoraire: Number(source.coutHoraire) || 0,
+      fraisGeneraux: Number(source.fraisGeneraux) || 0,
+      fraisChantier: Number(source.fraisChantier) || 0,
+      imprevus: Number(source.imprevus) || 0,
+      marge: Number(source.marge) || 0,
+      formuleK: source.formuleK === "multiplicative" ? "multiplicative" : "additive",
+      coefficientK: coefficientK(source),
+    };
+  }
+
+  /*
+   * Photographie d'une ligne de devis. Le libelle et l'unite sont copies eux aussi :
+   * un ouvrage renomme, ou supprime de la bibliotheque, ne doit pas rendre illisible
+   * un devis deja remis. coutDirect permet de justifier la marge a posteriori.
+   */
+  function figerLigneDevis(ligne, ouvrage, calcul) {
+    return {
+      id: ligne.id,
+      ouvrageId: ligne.ouvrageId,
+      quantite: Number(ligne.quantite) || 0,
+      nom: ouvrage ? ouvrage.nom : ligne.nom || "Ouvrage supprimé",
+      unite: ouvrage ? ouvrage.unite : ligne.unite || "",
+      puHtva: calcul ? roundMoney(calcul.vente) : Number(ligne.puHtva) || 0,
+      coutDirect: calcul ? roundMoney(calcul.direct) : Number(ligne.coutDirect) || 0,
+    };
+  }
+
+  // Totaux d'un devis, lus sur les prix figes — jamais recalcules.
+  function totauxDevis(devis) {
+    const ht = (devis.lignes || []).reduce(
+      (somme, ligne) => somme + (Number(ligne.puHtva) || 0) * (Number(ligne.quantite) || 0),
+      0,
+    );
+    const tva = ht * (Number(devis.tva) || 0) / 100;
+    return { ht: roundMoney(ht), tva: roundMoney(tva), ttc: roundMoney(ht + tva) };
+  }
+
+  /*
+   * Ecart entre ce qui a ete chiffre et ce que la bibliotheque donnerait aujourd'hui.
+   * C'est la difference entre les deux lectures : « montant remis au client » et
+   * « montant si je refaisais ce devis maintenant ». venteActuelle(ouvrageId) rend le
+   * prix du jour, ou null si l'ouvrage n'existe plus.
+   */
+  function ecartsDevis(devis, venteActuelle) {
+    const lignes = (devis.lignes || []).map((ligne) => {
+      const actuel = venteActuelle(ligne.ouvrageId);
+      const puActuel = actuel === null || actuel === undefined ? null : roundMoney(actuel);
+      const quantite = Number(ligne.quantite) || 0;
+      const puFige = Number(ligne.puHtva) || 0;
+      return {
+        id: ligne.id,
+        puFige,
+        puActuel,
+        // Un ouvrage disparu n'est pas un ecart de prix : c'est un autre probleme,
+        // signale ailleurs, et il ne doit pas gonfler le total des ecarts.
+        ecart: puActuel === null ? 0 : roundMoney((puActuel - puFige) * quantite),
+        introuvable: puActuel === null,
+      };
+    });
+    const modifiees = lignes.filter((ligne) => !ligne.introuvable && ligne.puActuel !== ligne.puFige);
+    return {
+      lignes,
+      nbModifiees: modifiees.length,
+      ecartTotal: roundMoney(modifiees.reduce((somme, ligne) => somme + ligne.ecart, 0)),
+    };
+  }
+
   /* --------------------------------------------------------------- etat metier */
 
   /*
@@ -846,7 +928,21 @@
     // sous quel profil les confirmations sont memorisees.
     // id : identifie ce metre dans l'historique (IndexedDB), pour pouvoir le rouvrir
     // avec ses lignes, son analyse et le fichier recu.
-    return { id: "", fileName: "", commune: "", analysedCommune: "", rows: [], analysed: [], alerts: [], skipped: 0, mapping: {} };
+    // fige : metre rouvert depuis l'historique. Ses montants sont ceux du jour ou il a
+    // ete rendu au pouvoir adjudicateur, pas ceux de la bibliotheque d'aujourd'hui.
+    return {
+      id: "",
+      fileName: "",
+      commune: "",
+      analysedCommune: "",
+      fige: false,
+      contexte: null,
+      rows: [],
+      analysed: [],
+      alerts: [],
+      skipped: 0,
+      mapping: {},
+    };
   }
 
   function blankState(catalog) {
@@ -958,6 +1054,7 @@
     const aujourdhui = /^\d{4}-\d{2}-\d{2}$/.test(String(deps.today || "")) ? deps.today : "";
     const sourceDevis =
       Array.isArray(source.devisList) && source.devisList.length ? source.devisList : [source.devis || {}];
+    const contexteActuel = contextePrix(next.settings);
     next.devisList = sourceDevis.map((devis) => ({
       id: devis.id || uid(),
       numero: String(devis.numero || "").trim(),
@@ -965,17 +1062,30 @@
       client: devis.client || "",
       adresse: devis.adresse || "",
       objet: devis.objet || "",
+      // Un devis fige n'accepte plus ni recalcul ni modification de ligne : c'est le
+      // document remis au client.
+      statut: devis.statut === "fige" ? "fige" : "brouillon",
+      // Reglages avec lesquels ce devis a ete chiffre. Un devis anterieur au figeage
+      // n'en avait pas : on prend ceux d'aujourd'hui, faute de mieux, ce qui est
+      // coherent avec les prix figes ci-dessous.
+      contexte: devis.contexte && Number.isFinite(Number(devis.contexte.coefficientK)) ? devis.contexte : contexteActuel,
       // 0 % est une valeur legitime (regime cocontractant, courant en marche public) :
       // « || 21 » la remettait a 21 a chaque rechargement.
       tva:
         Number.isFinite(Number(devis.tva)) && devis.tva !== null && devis.tva !== ""
           ? Number(devis.tva)
           : Number(next.settings.tva) || 21,
-      lignes: (devis.lignes || []).map((ligne) => ({
-        id: ligne.id || uid(),
-        ouvrageId: ligne.ouvrageId || "",
-        quantite: Number(ligne.quantite) || 0,
-      })),
+      lignes: (devis.lignes || []).map((ligne) => {
+        const base = { id: ligne.id || uid(), ouvrageId: ligne.ouvrageId || "", quantite: Number(ligne.quantite) || 0 };
+        // Ligne enregistree avant le figeage : on la fige au prix du jour, seule
+        // approximation disponible, plutot que de la laisser flotter indefiniment.
+        if (Number.isFinite(Number(ligne.puHtva)) && ligne.puHtva !== null && ligne.puHtva !== "") {
+          return figerLigneDevis({ ...base, ...ligne }, null, null);
+        }
+        const ouvrage = next.ouvrages.find((item) => item.id === base.ouvrageId);
+        const calcul = ouvrage ? calculateOuvrage(ouvrage, next.settings, next.materiaux) : null;
+        return figerLigneDevis(base, ouvrage, calcul);
+      }),
     }));
     // Numeros manquants (migration) : attribues dans l'ordre, par annee.
     next.devisList.forEach((devis) => {
@@ -1559,6 +1669,10 @@
     normalizeState,
     resolveCommuneKey,
     numeroDevisSuivant,
+    contextePrix,
+    figerLigneDevis,
+    totauxDevis,
+    ecartsDevis,
     memoriserCode,
     supprimerOuvrage,
     fusionnerOuvrages,

@@ -584,7 +584,23 @@
             <section class="panel">
               <div class="panel-head">
                 <h2>Lignes du devis</h2>
+                <span class="devis-statut-zone">
+                  <span class="statut" id="devis-statut"></span>
+                  <button class="ghost" id="figer-devis" type="button">Figer le devis</button>
+                </span>
               </div>
+              <p class="devis-contexte" id="devis-contexte"></p>
+
+              <!--
+                Ecart entre le devis tel qu'il a ete chiffre et ce que la bibliotheque
+                donnerait aujourd'hui : un devis n'est pas une requete sur les prix du
+                jour, mais on doit pouvoir voir la difference et decider.
+              -->
+              <div class="devis-ecart" id="devis-ecart" hidden>
+                <span id="devis-ecart-texte"></span>
+                <button class="ghost" id="actualiser-devis" type="button">Actualiser les prix</button>
+              </div>
+
               <form class="line-form" id="devis-line-form">
                 <select name="ouvrage" aria-label="Ouvrage"></select>
                 <input name="quantite" type="number" min="0" step="0.01" placeholder="Quantité" required aria-label="Quantité" inputmode="decimal" />
@@ -710,6 +726,15 @@
                     <tbody id="metre-missing-groups"></tbody>
                   </table>
                 </div>
+              </div>
+
+              <!--
+                Metre rouvert depuis l'historique : les montants sont ceux du jour ou
+                il a ete rendu, pas ceux de la bibliotheque d'aujourd'hui.
+              -->
+              <div class="devis-ecart" id="metre-fige" hidden>
+                <span id="metre-fige-texte"></span>
+                <button class="ghost" id="recalculer-metre" type="button">Recalculer aux prix actuels</button>
               </div>
 
               <!-- Ce que veut dire chaque pastille : sans ça, la moitie du tableau

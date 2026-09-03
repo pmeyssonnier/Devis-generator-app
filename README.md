@@ -136,6 +136,11 @@ Le fichier reçu et le métré chiffré sont conservés sur l'appareil (IndexedD
 - **Rouvrir** restitue les lignes, l'analyse, les colonnes choisies et le fichier reçu —
   de quoi comparer deux marchés ou compléter un CSC rendu la semaine précédente.
   **Retirer** supprime définitivement une entrée de l'historique.
+- Un métré rouvert est **figé au prix rendu** : il affiche les montants remis à
+  l'époque, et réexporter le classeur y réécrit exactement les mêmes prix, quelle que
+  soit la bibliothèque d'aujourd'hui. Un bandeau rappelle le coût horaire et le
+  coefficient K de ce chiffrage. **Recalculer aux prix actuels** rebascule
+  volontairement l'ensemble sur la bibliothèque du jour et annonce l'écart.
 
 Un navigateur qui refuse IndexedDB (navigation privée stricte) fait simplement
 retomber l'application sur son comportement d'avant : le classeur ne survit pas au
@@ -161,6 +166,39 @@ le précédent.
 
 Une bibliothèque enregistrée avant ce changement ne contenait qu'un devis : il devient
 le premier de la liste, avec un numéro et une date attribués s'il n'en avait pas.
+
+## Un devis remis ne bouge plus
+
+Un prix remis à un client est un engagement : il ne doit pas changer parce que la
+bibliothèque a évolué depuis. Chaque ligne de devis conserve donc **le prix tel qu'il a
+été chiffré** — nom, unité, prix unitaire de vente et coût direct sont recopiés dans la
+ligne au moment où elle est ajoutée. Le devis retient en plus le contexte du calcul :
+coût horaire, frais généraux, frais de chantier, imprévus, marge, formule et valeur du
+coefficient K, TVA et date.
+
+Concrètement, augmenter le prix d'un matériau, corriger un rendement ou passer la marge
+de 18 à 24 % ne touche plus un devis déjà chiffré, même rouvert trois mois plus tard.
+Supprimer un ouvrage de la bibliothèque non plus : la ligne reste lisible et chiffrée.
+
+- **Statut.** Un devis est *brouillon* tant qu'il se travaille. **Figer le devis** le
+  passe en *figé* : il n'accepte plus d'ajout, de modification ni de suppression de
+  ligne — c'est la version remise au client. Le bouton refait l'inverse (*Rouvrir en
+  brouillon*) pour préparer une révision, ou l'on **Duplique** pour partir sur une
+  variante en gardant l'original intact.
+- **Écart.** Si la bibliothèque a bougé depuis, un bandeau annonce combien de lignes ne
+  valent plus le même prix et de combien, et le prix du jour s'affiche sous le prix
+  retenu. Le montant du devis, lui, ne change pas.
+- **Actualiser les prix** (brouillon uniquement) reprend les prix d'aujourd'hui sur
+  toutes les lignes, en une action explicite et annoncée. Un devis figé ne propose pas
+  ce bouton.
+
+L'export Excel du devis ajoute en pied de tableau le coût horaire, le coefficient K et
+la formule utilisés : de quoi refaire le calcul plus tard sans deviner les réglages de
+l'époque.
+
+Une bibliothèque enregistrée avant ce changement voit ses lignes figées au prix
+d'aujourd'hui à la première ouverture — c'est la seule valeur dont on dispose — et ses
+devis repartent en brouillon.
 
 ## Corriger la bibliothèque avec les chantiers réalisés
 
@@ -214,7 +252,7 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `sw.js` | Service worker : cache l'application pour l'usage hors connexion |
 | `db.js` | IndexedDB : classeur reçu et historique des métrés chiffrés |
 | `catalog.js` | Catalogue de départ et codifications connues |
-| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, retour de chantier, péremption des prix |
+| `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, gel des prix d'un devis, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
 
@@ -258,6 +296,9 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 - **Migration de l'état** : une bibliothèque enregistrée par une version antérieure
   (ancien couple `materiauId`/`quantiteMateriau`, `referencesMetre`, communes
   homonymes en conflit, TVA à 0 %) doit se relire sans perte ni écrasement silencieux.
+- **Prix figés** : une ligne de devis chiffrée hier garde son prix quand la
+  bibliothèque change, un ouvrage supprimé reste lisible, les totaux se lisent sur les
+  valeurs figées et `ecartsDevis` chiffre la dérive sans la subir.
 - **Invariants après remaniement** : après un apprentissage, une fusion ou une
   suppression d'ouvrage, aucun code de métré ne désigne deux ouvrages et aucune
   référence ne pointe vers un ouvrage disparu.
