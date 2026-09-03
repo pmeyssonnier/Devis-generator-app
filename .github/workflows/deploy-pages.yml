@@ -73,6 +73,10 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
+      # L'outillage de developpement n'a rien a faire sur le site publie : la skill
+      # de design pese 5 Mo et ne sert qu'en local. Suppression dans la copie de
+      # travail du job, jamais dans le depot.
+      - run: rm -rf .claude .github node_modules test playwright.config.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .

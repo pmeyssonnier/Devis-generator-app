@@ -441,6 +441,29 @@ fonctionne toujours ; l'application signale seulement qu'il faut relancer l'anal
 le rapprocher de la bibliothèque qui vient d'arriver. Un export ancien, lui, contenait
 un métré amputé : il est ignoré au profit de celui de l'appareil, sauf s'il est complet.
 
+## Design
+
+Le style est tenu avec [Impeccable](https://impeccable.style), une skill de design pour
+agents (Apache-2.0), installée dans `.claude/skills/impeccable/`. Elle apporte un
+vocabulaire de design partagé et surtout un **détecteur déterministe** qui tourne sans
+réseau ni clé d'API :
+
+```bash
+node .claude/skills/impeccable/scripts/detect.mjs styles.css index.html
+```
+
+Deux exceptions assumées restent signalées par le détecteur :
+
+- **Inter** comme police principale. Le détecteur la juge trop répandue pour être
+  distinctive, ce qui est vrai ; en changer suppose d'embarquer des fichiers de police
+  dans le dépôt, l'application devant fonctionner hors connexion. Décision reportée.
+- Deux `cramped-padding` sur `<dialog id="app-dialog">` et `.settings-section`. Vérifié
+  au rendu : les enfants portent bien 18 px et 16 px de marge intérieure. Faux positifs
+  de l'heuristique, qui lit la marge du conteneur et non celle des enfants.
+
+Le détecteur a besoin de `htmlparser2`, `css-select`, `css-tree` et `domutils` — présents
+dans les `devDependencies`. Sans eux il tourne en mode dégradé et sous-compte.
+
 ## Licence
 
 `UNLICENSED` : aucun droit d'usage n'est accordé à des tiers. C'est sans conséquence

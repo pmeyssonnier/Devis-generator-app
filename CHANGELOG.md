@@ -3,6 +3,34 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.3.0 — 2026-09-03
+
+Passe de style menée avec [Impeccable](https://impeccable.style) (skill de design pour
+agents, Apache-2.0). Identité conservée — vert sapin, sobre, dense : c'est un
+raffinement, pas une refonte. Le détecteur passe de 27 anti-patterns à 4.
+
+- **Contraste corrigé.** En thème sombre, le survol des boutons pleins assombrissait
+  l'aplat alors que le texte posé dessus est foncé : **2,6:1**, sous le seuil de 4,5:1,
+  sur treize composants. Le survol éclaircit désormais — **8,7:1**.
+- **Plus de bandes latérales colorées.** Les cinq encarts (alertes, avertissement de
+  champ, écart de devis, cartes de métré sur téléphone, prix périmé) portaient une bande
+  de 3 à 4 px à gauche. Elles sont remplacées par un filet complet dans la même teinte,
+  dérivé du ton, donc juste dans les deux thèmes.
+- **Échelle typographique.** Treize tailles entre 9 et 34 px, choisies au cas par cas,
+  ramenées à sept marches nommées.
+- **Surfaces navigateur.** Sélection, curseur de saisie, anneau de focus clavier et
+  ascenseurs étaient aux couleurs par défaut du navigateur — du bleu système au milieu
+  d'une interface verte. Ils suivent maintenant le thème. Les chiffres passent en
+  tabulaire dans les tableaux et les champs numériques : les colonnes s'alignent et un
+  total ne fait plus danser la ligne.
+- **Tableau de bord sur téléphone.** Les sept indicateurs s'empilaient en une colonne :
+  six écrans de défilement pour sept nombres. Ils tiennent maintenant en deux colonnes,
+  sur un seul écran.
+- **Animation.** Le message de confirmation animait `max-height` et `padding`, donc
+  recalculait la mise en page à chaque image. Seules l'opacité et la translation bougent.
+- Le sur-titre « Mémoire de chiffrage » au-dessus du titre de vue est retiré : le titre
+  se suffit, et cela rend de la hauteur sur téléphone.
+
 ## 3.2.1 — 2026-09-03
 
 Deux raisons faisaient que « Créer l'ouvrage » ne s'affichait pas là où on l'attendait :
