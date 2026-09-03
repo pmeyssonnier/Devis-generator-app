@@ -3,6 +3,14 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.1.1 — 2026-09-03
+
+- Le numéro de version apparaît dans **Paramètres → À propos**, et plus seulement en
+  haut à droite : c'est là qu'on vient le chercher.
+- « Vérifier les mises à jour » dans le même panneau force la vérification du service
+  worker puis recharge, pour les cas où un déploiement vient d'être publié et où
+  l'écran affiche encore l'ancienne version.
+
 ## 3.1.0 — 2026-09-03
 
 ### Recettes techniques pour un poste inconnu

@@ -157,3 +157,24 @@ test("XLSX : le métré et son classeur survivent à un rechargement, et l'expor
   expect(grille[4][1]).toBe("Désignation des ouvrages");
   expect(grille[5][4]).toBe("unitaire HTVA");
 });
+
+test("la version est lisible en haut à droite et dans les réglages", async ({ page }) => {
+  // Le numéro vivait en pied de barre latérale, laquelle devient la barre de
+  // navigation du bas sur téléphone : il y était masqué par un display:none.
+  const entete = page.locator("#app-version");
+  await expect(entete).toHaveText(/^v\d+\.\d+\.\d+$/);
+  await expect(entete).toBeVisible();
+
+  await page.click('[data-view="settings"]');
+  const reglages = page.locator("#about-version");
+  await expect(reglages).toBeVisible();
+  await expect(reglages).toHaveText(await entete.textContent());
+
+  // Et sur un écran de téléphone, les deux doivent rester visibles.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(reglages).toBeVisible();
+  await expect(entete).toBeVisible();
+  const boite = await entete.boundingBox();
+  expect(boite.x + boite.width).toBeLessThanOrEqual(390);
+  await expect(page.locator("#check-update")).toBeVisible();
+});

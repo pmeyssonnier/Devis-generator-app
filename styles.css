@@ -224,6 +224,40 @@ textarea {
   height: 16px;
 }
 
+.a-propos {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 18px;
+  margin: 0 0 16px;
+}
+
+.a-propos dt {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.a-propos dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+#about-version {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .a-propos {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .a-propos dd {
+    margin-bottom: 10px;
+  }
+}
+
 .app-version {
   flex: 0 0 auto;
   padding-top: 6px;
