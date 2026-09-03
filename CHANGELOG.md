@@ -3,6 +3,39 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.1.0 — 2026-09-03
+
+### Recettes techniques pour un poste inconnu
+
+Dernier maillon de la chaîne de rapprochement, après le code communal, l'ouvrage proche
+et la famille métier : quand le libellé décrit un ouvrage courant, l'application propose
+sa composition typique — matériaux, quantités par unité, rendement, matériel — plutôt
+que de laisser un formulaire vide.
+
+Rien n'est enregistré sans accord : la proposition s'affiche en entier, avec la note
+technique qui dit ce qu'elle couvre et ce qu'elle ne couvre pas, et le formulaire n'est
+prérempli qu'après un « Préremplir le formulaire ». Les valeurs sont annoncées comme
+indicatives, et les matériaux créés par une recette le sont sans date de prix — ils
+apparaissent donc comme « prix non daté » tant qu'ils ne sont pas confirmés.
+
+Trois recettes d'étanchéité pour commencer : joint de dilatation en toiture, solin et
+couvre-mur, joint souple en façade.
+
+### Familles métier à deux niveaux
+
+`classifyFamily` retenait la première règle qui matchait, si bien qu'un mot générique
+ajouté à une famille placée tôt dans la liste capturait tout ce qui le contient. Les
+règles distinguent maintenant les mots **distinctifs** (un seul métier) des mots de
+**contexte**, consultés seulement à défaut. C'est ce qui permet d'ajouter `joint`,
+`toiture` et `mastic` à l'étanchéité sans lui donner « Isolation de la toiture plate »
+ni « Joints de carrelage ».
+
+### Numéro de version visible sur téléphone
+
+Il était en pied de barre latérale, laquelle devient la barre de navigation du bas sur
+téléphone : le numéro y était masqué. Il est désormais en haut à droite, sur les deux
+formats.
+
 ## 3.0.0 — 2026-09-03
 
 Cette version fait passer l'application d'un outil à un seul métré et un seul devis à un

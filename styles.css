@@ -224,11 +224,13 @@ textarea {
   height: 16px;
 }
 
-.sidebar-version {
-  display: block;
-  margin-top: 12px;
-  color: #7c8b86;
+.app-version {
+  flex: 0 0 auto;
+  padding-top: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .main {
@@ -787,7 +789,6 @@ textarea {
   }
 
 
-  .topbar,
   .split,
   .editor-grid,
   .devis-layout,
@@ -795,8 +796,11 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  /* La barre du haut reste sur une ligne : titre à gauche, version à droite. */
   .topbar {
-    display: grid;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
   }
 
   .kpis {
@@ -1374,8 +1378,7 @@ tr.flag-detail-row.danger td {
     font-size: 15px;
   }
 
-  .brand span,
-  .sidebar-version {
+  .brand span {
     display: none;
   }
 

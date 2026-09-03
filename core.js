@@ -35,13 +35,26 @@
     heures: "h",
   };
 
+  /*
+   * Deux niveaux, et c'est la seule facon d'elargir une famille sans lui faire voler
+   * les postes des autres. classifyFamily retient la PREMIERE regle qui matche : un
+   * mot generique ajoute a une famille placee tot dans la liste capture donc tout ce
+   * qui le contient. « toiture » dans Étanchéité aurait pris « Isolation de la toiture
+   * plate » (Isolation vient apres), et « joint » aurait pris « Joints de carrelage ».
+   *
+   * FAMILY_RULES ne contient donc que des mots DISTINCTIFS — qui ne designent qu'un
+   * seul metier — et FAMILY_HINTS des mots de CONTEXTE, consultes seulement quand
+   * aucun mot distinctif n'a repondu. « Joints de carrelage » part en revetement de
+   * sol par « carrelage » ; « Réfection des joints de toiture », qui n'a aucun mot
+   * distinctif, retombe sur l'indice « joint » et part en étanchéité.
+   */
   const FAMILY_RULES = [
     ["Démolition / dépose", ["demolition", "depose", "piquage", "decoupe", "sciage", "demontage"]],
     ["Installation / protection chantier", ["installation", "chantier", "echafaudage", "bachage", "protection", "cloture", "securisation", "signalisation"]],
     ["Évacuation déchets", ["evacuation", "dechets", "conteneur", "container", "decharge", "tri"]],
     ["Maçonnerie / béton", ["maconnerie", "brique", "beton", "baies", "linteau", "seuil", "rejointoiement", "armature"]],
     ["Façade", ["facade", "enduit", "siloxane", "soubassement", "cimentage", "crepi"]],
-    ["Étanchéité", ["etancheite", "epdm", "bitumineuse", "membrane", "solin", "releve", "roofing"]],
+    ["Étanchéité", ["etancheite", "epdm", "bitumineuse", "membrane", "solin", "releve", "roofing", "dilatation", "fond de joint", "couvre joint", "acrotere"]],
     ["Isolation", ["isolation", "isolant", "pir", "laine", "pare vapeur", "parevapeur"]],
     ["Peinture", ["peinture", "peindre", "vernis", "lasure"]],
     ["Plafonnage / faux plafond", ["plafonnage", "plafond", "ba13", "ossature", "lissage", "platre"]],
@@ -49,6 +62,12 @@
     ["Menuiserie", ["chassis", "porte", "menuiserie", "quincaillerie", "vitrage", "garde corps"]],
     ["Sanitaire", ["wc", "sanitaire", "multicouche", "alimentation", "tuyauterie", "lavabo", "douche"]],
     ["Électricité", ["prise", "terre", "rgie", "electricite", "equipotentielle", "conformite", "luminaire", "cable"]],
+  ];
+
+  const FAMILY_HINTS = [
+    ["Étanchéité", ["joint", "toiture", "terrasse", "mastic", "etancher", "infiltration"]],
+    ["Maçonnerie / béton", ["mortier", "chainage", "fondation"]],
+    ["Menuiserie", ["seuil de porte", "serrure"]],
   ];
 
   const FAMILY_PREFIXES = {
@@ -575,8 +594,11 @@
 
   function classifyFamily(description) {
     const text = normalizeText(description);
-    const rule = FAMILY_RULES.find(([, words]) => words.some((word) => text.includes(word)));
-    return rule ? rule[0] : "À classer";
+    const trouve = (regles) => regles.find(([, mots]) => mots.some((mot) => text.includes(mot)));
+    const distinctif = trouve(FAMILY_RULES);
+    if (distinctif) return distinctif[0];
+    const indice = trouve(FAMILY_HINTS);
+    return indice ? indice[0] : "À classer";
   }
 
   function internalCodePrefix(name) {
@@ -1407,6 +1429,75 @@
     return complet ? candidat : courant;
   }
 
+  /* ---------------------------------------------------------------- recettes */
+
+  /*
+   * Dernier maillon de la chaine, quand un poste n'a ete reconnu ni par un code de
+   * cette commune, ni par un ouvrage techniquement proche : proposer la composition
+   * TYPIQUE de l'ouvrage a partir de son libelle, plutot que de laisser un formulaire
+   * vide. Ce qui sort d'ici est une proposition a valider, jamais un ouvrage
+   * enregistre : la decision reste humaine, et l'appelant doit le dire.
+   *
+   * Le filtre est volontairement strict — tous les mots de « exige », au moins un de
+   * « parmi », unite compatible. Une recette qui se declenche a tort coute plus cher
+   * qu'une recette qui ne se declenche pas : elle fait entrer dans la bibliotheque un
+   * ouvrage plausible mais faux, que plus rien ne distinguera ensuite.
+   */
+  function recettePourPoste(description, unite, recettes) {
+    const texte = normalizeText(description);
+    if (!texte) return null;
+    const retenues = (recettes || []).filter((recette) => {
+      const exige = recette.exige || [];
+      if (!exige.length || !exige.every((mot) => texte.includes(normalizeText(mot)))) return false;
+      const parmi = recette.parmi || [];
+      if (parmi.length && !parmi.some((mot) => texte.includes(normalizeText(mot)))) return false;
+      // Une recette au metre ne s'applique pas a un poste au m2 : c'est la meme
+      // erreur que rattacher un ouvrage d'unite incompatible, en moins visible.
+      return !unite || unitsCompatible(recette.unite, unite, 1);
+    });
+    if (!retenues.length) return null;
+    // La plus exigeante gagne : « joint + dilatation + toiture » decrit mieux le poste
+    // que « joint + facade », et doit donc passer devant.
+    return retenues.sort(
+      (a, b) => (b.exige || []).length + (b.parmi || []).length - ((a.exige || []).length + (a.parmi || []).length),
+    )[0];
+  }
+
+  /*
+   * Traduit une recette en brouillon d'ouvrage pour la bibliotheque de l'utilisateur.
+   * Les composants sont retrouves par nom : ceux qui manquent sont RENDUS A PART, avec
+   * leur prix indicatif. Les taire donnerait un ouvrage complet en apparence mais
+   * sous-chiffre — l'erreur la plus chere que puisse faire cette fonction.
+   */
+  function preparerRecette(recette, materiaux) {
+    if (!recette) return null;
+    const parNom = new Map((materiaux || []).map((materiau) => [normalizeText(materiau.nom), materiau]));
+    const composants = [];
+    const manquants = [];
+    (recette.composants || []).forEach((composant) => {
+      const connu = parNom.get(normalizeText(composant.materiau));
+      if (connu) composants.push({ materiauId: connu.id, quantite: composant.quantite });
+      else
+        manquants.push({
+          nom: composant.materiau,
+          unite: composant.unite || "",
+          prix: Number(composant.prixIndicatif) || 0,
+          quantite: composant.quantite,
+        });
+    });
+    return {
+      recetteId: recette.id,
+      nom: recette.nom,
+      unite: recette.unite,
+      heures: recette.heures,
+      materiel: recette.materiel,
+      motsCles: recette.motsCles || "",
+      note: recette.note || "",
+      composants,
+      manquants,
+    };
+  }
+
   /* ------------------------------------------------------------------ doublons */
 
   function findDuplicates(ouvrages, priceOf) {
@@ -1819,6 +1910,9 @@
     materiauxPerimes,
     isInternalCode,
     classifyFamily,
+    recettePourPoste,
+    preparerRecette,
+    FAMILY_HINTS,
     internalCodePrefix,
     nextInternalCode,
     normalizeRef,

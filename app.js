@@ -11,7 +11,7 @@
   const CATALOG_VERSION = 1;
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
-  const APP_VERSION = "3.0.0";
+  const APP_VERSION = "3.1.0";
   // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
   // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
   const THEME_KEY = "generateur-devis-theme";
@@ -2609,7 +2609,7 @@
   // Pré-remplit le formulaire "nouvel ouvrage" avec le libellé/l'unité d'un poste de
   // métré non reconnu : evite de retaper le meme concept avec des mots differents,
   // la cause la plus frequente des quasi-doublons entre communes.
-  function startOuvrageCreationFromMetreRow(index) {
+  async function startOuvrageCreationFromMetreRow(index) {
     const row = state.metre.analysed[Number(index)];
     if (!row) return;
     goToView("ouvrages");
@@ -2622,7 +2622,97 @@
     form.elements.unite.value = row.unite;
     updateEditForms();
     form.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    // Dernier maillon avant la saisie a la main : si une recette technique decrit ce
+    // poste, la proposer plutot que de laisser un formulaire vide.
+    const applique = await proposerRecette(row);
+    if (applique) return;
     notify(`Complétez la composition, puis enregistrez : le poste « ${row.numero} » sera rattaché automatiquement.`, "info");
+  }
+
+  function recetteHtml(brouillon, row) {
+    const ligne = (nom, quantite, unite, suffixe = "") =>
+      `<tr><td>${esc(nom)}${suffixe}</td><td class="num">${esc(number.format(quantite))}</td><td>${esc(unite)}</td></tr>`;
+    const connus = brouillon.composants.map((composant) => {
+      const materiau = materialById(composant.materiauId);
+      return ligne(materiau ? materiau.nom : "?", composant.quantite, materiau ? materiau.unite : "");
+    });
+    const nouveaux = brouillon.manquants.map((manquant) =>
+      ligne(manquant.nom, manquant.quantite, manquant.unite, ` <em>(nouveau, ${euro.format(manquant.prix)}/${esc(manquant.unite)})</em>`),
+    );
+    return `
+      <p>Le poste « ${esc(row.numero)} » ressemble à un ouvrage connu du métier :
+        <strong>${esc(brouillon.nom)}</strong>, au ${esc(brouillon.unite)}.</p>
+      <table>
+        <thead><tr><th>Composant</th><th class="num">Par ${esc(brouillon.unite)}</th><th>Unité</th></tr></thead>
+        <tbody>${connus.concat(nouveaux).join("")}</tbody>
+      </table>
+      <p>Main-d’œuvre proposée : <strong>${esc(number.format(brouillon.heures))} h/${esc(brouillon.unite)}</strong>,
+        matériel ${esc(euro.format(brouillon.materiel))}.</p>
+      ${brouillon.note ? `<p>${esc(brouillon.note)}</p>` : ""}
+      <p><strong>Ces valeurs sont indicatives</strong> : elles viennent de l’usage courant du métier, pas de vos
+        prix ni de vos rendements. Vérifiez-les dans le formulaire avant d’enregistrer.</p>
+      ${
+        brouillon.manquants.length
+          ? `<p>${brouillon.manquants.length} matériau(x) seront ajoutés à votre bibliothèque, sans date de prix —
+             ils apparaîtront donc comme « prix non daté » tant que vous ne les aurez pas confirmés.</p>`
+          : ""
+      }`;
+  }
+
+  /*
+   * Genere un brouillon d'ouvrage a partir d'une recette, apres accord explicite.
+   * Rien n'est enregistre ici : le formulaire est prerempli, et c'est l'utilisateur
+   * qui valide. Les materiaux manquants, eux, sont bien crees — sans quoi le
+   * formulaire afficherait une composition amputee, donc un prix trop bas.
+   */
+  async function proposerRecette(row) {
+    const recette = C.recettePourPoste(row.description, row.unite, CATALOG.recettes);
+    if (!recette) return false;
+    const brouillon = C.preparerRecette(recette, state.materiaux);
+    const accepte = await askDialog({
+      titre: "Partir d’une recette technique ?",
+      corpsHtml: recetteHtml(brouillon, row),
+      corpsTexte: `${brouillon.nom} — ${brouillon.composants.length + brouillon.manquants.length} composant(s), ${number.format(brouillon.heures)} h/${brouillon.unite}. Valeurs indicatives à vérifier.`,
+      ok: "Préremplir le formulaire",
+      annuler: "Saisir moi-même",
+    });
+    if (!accepte) return false;
+
+    const composants = brouillon.composants.slice();
+    brouillon.manquants.forEach((manquant) => {
+      const id = uid();
+      state.materiaux.push({
+        id,
+        nom: manquant.nom,
+        unite: manquant.unite,
+        fournisseur: "",
+        reference: "",
+        conditionnement: "",
+        prix: manquant.prix,
+        // Pas de date : un prix indicatif ne doit pas passer pour un prix relevé.
+        datePrix: "",
+      });
+      composants.push({ materiauId: id, quantite: manquant.quantite });
+    });
+    if (brouillon.manquants.length) saveState();
+
+    const form = $("#ouvrage-form");
+    form.elements.nom.value = row.description;
+    form.elements.unite.value = brouillon.unite;
+    form.elements.heures.value = brouillon.heures;
+    form.elements.materiel.value = brouillon.materiel;
+    form.elements.motsCles.value = C.normalizeKeywords([brouillon.motsCles, row.description]);
+    // materialOptionsHtml est reconstruit au rendu : les nouveaux materiaux doivent y
+    // etre avant que setComposantRows ne remplisse les selects.
+    render();
+    setComposantRows(composants);
+    updateEditForms();
+    notify(
+      `Proposition « ${brouillon.nom} » : vérifiez rendement et prix, puis enregistrez — le poste « ${row.numero} » sera rattaché.`,
+      "info",
+    );
+    return true;
   }
 
   function startDevisLineEdit(id) {
