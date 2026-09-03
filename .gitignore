@@ -5,3 +5,7 @@ Thumbs.db
 
 # Metres reels utilises comme jeu d'essai local, non publies.
 METRE_*.xlsx
+
+# Sorties des tests de bout en bout.
+test-results/
+playwright-report/

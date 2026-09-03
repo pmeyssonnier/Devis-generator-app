@@ -269,6 +269,8 @@ Un prix sans date n'est pas concerné : rien n'indique depuis combien de temps i
 | `core.js` | Logique métier pure : calcul, unités, rapprochement, lecture et analyse de métré, migration de l'état enregistré, gel des prix d'un devis, retour de chantier, péremption des prix |
 | `app.js` | Rendu, événements, imports/exports, dialogues |
 | `test/core.test.js` | Tests de `core.js` et cohérence du catalogue |
+| `test/e2e/` | Parcours navigateur (Playwright), serveur statique et fixtures |
+| `playwright.config.mjs` | Configuration des parcours navigateur |
 
 `core.js` ne touche pas au DOM, ce qui rend la logique testable hors navigateur. La
 frontière suit une règle simple : **tout ce qui transforme des données va dans
@@ -293,15 +295,24 @@ n'ayant pas d'outil de build, les deux sont à mettre à jour à la main ensembl
 (`APP_VERSION` dans `app.js`) — utile surtout pour confirmer, une fois déployée sur
 GitHub Pages, que le navigateur affiche bien la dernière version.
 
+Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
+quand la forme des données enregistrées change, ou quand une habitude de travail change.
+Ce qui a changé d'une version à l'autre est dans [CHANGELOG.md](CHANGELOG.md).
+
 ## Tests
 
 ```bash
-node --test test/core.test.js
+npm test        # logique pure, aucune dépendance à installer
+npm run test:e2e   # deux parcours navigateur (npm ci d'abord)
+npm run test:all   # les deux
 ```
 
-Aucune dépendance à installer. Le déploiement sur GitHub Pages exécute cette suite avant
-de publier, et elle tourne aussi sur chaque pull request : un commit qui la casse n'est
-ni fusionné ni mis en ligne.
+Les deux suites tournent sur chaque pull request et avant chaque déploiement : un commit
+qui casse l'une ou l'autre n'est ni fusionné ni mis en ligne.
+
+`npm test` n'a besoin de rien d'autre que Node. `npm run test:e2e` demande
+`npm ci` puis `npx playwright install chromium` ; dans un environnement qui fournit déjà
+un Chromium, `PLAYWRIGHT_CHROMIUM=/chemin/vers/chrome` évite d'en télécharger un second.
 
 Trois familles de tests couvrent ce qui coûte le plus cher à casser :
 
@@ -325,6 +336,23 @@ Trois familles de tests couvrent ce qui coûte le plus cher à casser :
   suppression d'ouvrage, aucun code de métré ne désigne deux ouvrages et aucune
   référence ne pointe vers un ouvrage disparu.
 
+Deux **parcours navigateur** (`test/e2e/`) couvrent ce que la logique pure ne peut pas
+voir — le DOM assemblé, IndexedDB, un vrai téléchargement :
+
+1. **CSV** : importer un métré, se faire refuser l'analyse sans commune, analyser,
+   confirmer les correspondances (les codes deviennent propres à la commune), exporter
+   le récapitulatif et vérifier que la ligne du poste porte un prix et un montant.
+2. **XLSX** : importer un classeur cumulant titre en capitales, phrase d'introduction et
+   en-tête sur deux lignes, **recharger la page**, vérifier que le métré et son classeur
+   reviennent d'IndexedDB, puis compléter le fichier reçu et contrôler que les prix sont
+   écrits dans la colonne « Prix unitaire HTVA » — la colonne voisine, également nommée
+   « Prix », devant rester vide.
+
+Aucun des deux n'atteint le réseau : SheetJS est servi depuis `node_modules` plutôt que
+depuis le CDN, pour qu'un incident chez jsdelivr ne fasse pas rougir la CI. Aucune
+reprise automatique non plus : un parcours qui échoue par intermittence ne prouve rien,
+il doit être vu.
+
 ## Sauvegarde
 
 « Exporter les données » produit un JSON contenant la mémoire de chiffrage :
@@ -344,6 +372,18 @@ Il garde ses postes, ses quantités et son classeur, donc « Compléter le fichi
 fonctionne toujours ; l'application signale seulement qu'il faut relancer l'analyse pour
 le rapprocher de la bibliothèque qui vient d'arriver. Un export ancien, lui, contenait
 un métré amputé : il est ignoré au profit de celui de l'appareil, sauf s'il est complet.
+
+## Licence
+
+`UNLICENSED` : aucun droit d'usage n'est accordé à des tiers. C'est sans conséquence
+tant que l'outil sert en interne, mais **la question se posera avant de le distribuer à
+d'autres entrepreneurs** — en l'état, chacun l'utiliserait sans base juridique, et rien
+n'écarte votre responsabilité si un chiffrage se révèle faux.
+
+Trois régimes possibles le jour venu : permissif (MIT — l'outil circule librement, la
+clause « AS IS » écarte la garantie), copyleft (AGPL-3.0 — qui le modifie et le met en
+ligne doit publier ses modifications), ou propriétaire avec une licence écrite, seul
+régime qui permet de le facturer. Décision reportée, volontairement.
 
 ## Limites connues
 

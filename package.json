@@ -1,10 +1,16 @@
 {
   "name": "generateur-devis",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "description": "Chiffrage batiment : bibliotheque d'ouvrages, devis client et completion de metres de marches publics.",
   "private": true,
   "scripts": {
-    "test": "node --test test/core.test.js"
+    "test": "node --test test/core.test.js",
+    "test:e2e": "playwright test",
+    "test:all": "npm test && npm run test:e2e"
   },
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "xlsx": "^0.18.5"
+  }
 }
