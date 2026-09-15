@@ -3,6 +3,24 @@
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : le premier nombre change
 quand la forme des données enregistrées change, ou quand une habitude de travail change.
 
+## 3.3.1 — 2026-09-09
+
+Deux corrections sur le bilan de chantier, l'écran qui sert à comparer ce qu'un
+chantier a rapporté à ce qu'il a coûté. Aucune donnée enregistrée n'est touchée.
+
+- **La recette affichée n'était pas l'argent facturé.** Le devis, le métré rendu et le
+  classeur réexporté multiplient tous le prix de vente **arrondi** — c'est l'invariant
+  du produit. Le bilan de chantier, lui, multipliait le prix brut : 15 401,20 € au lieu
+  de 15 401,60 € sur un seul poste de 320 m². L'écart grandit avec la quantité et le
+  nombre de postes, et il se reportait intégralement sur la marge réelle, qui est
+  précisément ce que cet écran sert à lire.
+- **Une fourniture jamais achetée passait inaperçue.** Le manque n'était signalé que
+  lorsqu'il n'y avait *aucun* relevé d'achat. Un ouvrage composé d'un enduit et d'un
+  treillis, dont seul l'enduit était relevé, affichait une marge réelle complète alors
+  qu'il manquait 944 € de matières — une marge flatteuse, sans avertissement. Les
+  fournitures prévues par les ouvrages relevés mais sans achat saisi sont maintenant
+  nommées sous le bilan.
+
 ## 3.3.0 — 2026-09-03
 
 Passe de style menée avec [Impeccable](https://impeccable.style) (skill de design pour

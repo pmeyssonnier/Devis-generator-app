@@ -277,6 +277,81 @@ test("un chantier sans releve d'achat le signale plutot que d'afficher une marge
   assert.equal(bilan.reel.matieres, 0);
 });
 
+/*
+ * Reglages choisis pour que le prix de vente tombe sur plus de deux decimales :
+ * 0,35 h x 47,50 = 16,625, + 13,50 de matiere, + 4,50 de materiel = 34,625 de cout
+ * direct, x K = 1,39 -> 48,128750 EUR/m2, factures 48,13.
+ */
+const SETTINGS_DECIMALES = { coutHoraire: 47.5, fraisGeneraux: 12, fraisChantier: 5, imprevus: 4, marge: 18 };
+const MATERIAUX_DECIMALES = [
+  { id: "d1", nom: "Enduit de façade", unite: "m2", prix: 13.5 },
+  { id: "d2", nom: "Treillis d’armature", unite: "m2", prix: 3.2 },
+];
+const OUVRAGE_DECIMALES = {
+  id: "od",
+  nom: "Enduit de façade minéral armé",
+  unite: "m2",
+  heures: 0.35,
+  materiel: 4.5,
+  composants: [{ materiauId: "d1", quantite: 1 }],
+};
+
+test("la recette d'un chantier reprend le prix facture, pas le prix non arrondi", () => {
+  // Le devis, le metre rendu et le fichier Excel multiplient tous le prix ARRONDI
+  // (priceOf). Si le bilan de chantier multiplie le prix brut, la recette qu'il
+  // affiche n'est pas l'argent facture, et la marge reelle est fausse d'autant.
+  const chantier = {
+    id: "c1",
+    mainOeuvre: [{ id: "r1", ouvrageId: "od", quantite: 320, personnes: 2, duree: 56 }],
+    achats: [{ id: "a1", materiauId: "d1", quantite: 320, montant: 4400 }],
+  };
+  const bilan = C.bilanChantier(chantier, [OUVRAGE_DECIMALES], MATERIAUX_DECIMALES, SETTINGS_DECIMALES);
+
+  const puFacture = C.roundMoney(C.calculateOuvrage(OUVRAGE_DECIMALES, SETTINGS_DECIMALES, MATERIAUX_DECIMALES).vente);
+  assert.equal(puFacture, 48.13);
+  assert.equal(bilan.recette, 15401.6, "320 x 48,13 EUR, comme sur le devis");
+  assert.equal(bilan.lignes[0].recette, C.roundMoney(puFacture * 320));
+});
+
+test("une fourniture jamais achetee est signalee, pas noyee dans la marge", () => {
+  // Le treillis fait partie de l'ouvrage mais n'a pas de releve d'achat : les
+  // matieres reelles sont incompletes, donc la marge reelle est flatteuse. Tant que
+  // le manque n'etait signale que lorsqu'il n'y avait AUCUN achat, ce cas passait
+  // pour un bilan complet.
+  const ouvrage = {
+    ...OUVRAGE_DECIMALES,
+    composants: [
+      { materiauId: "d1", quantite: 1 },
+      { materiauId: "d2", quantite: 1 },
+    ],
+  };
+  const chantier = {
+    id: "c2",
+    mainOeuvre: [{ id: "r1", ouvrageId: "od", quantite: 320, personnes: 2, duree: 56 }],
+    achats: [{ id: "a1", materiauId: "d1", quantite: 320, montant: 4400 }],
+  };
+  const bilan = C.bilanChantier(chantier, [ouvrage], MATERIAUX_DECIMALES, SETTINGS_DECIMALES);
+
+  assert.equal(bilan.achatsManquants, false, "il y a bien un achat relevé");
+  assert.deepEqual(
+    bilan.materiauxSansAchat.map((materiau) => materiau.nom),
+    ["Treillis d’armature"],
+    "le matériau prévu mais jamais acheté doit être nommé",
+  );
+  assert.equal(bilan.matieresIncompletes, true);
+});
+
+test("un bilan dont tous les materiaux sont releves n'est pas signale incomplet", () => {
+  const chantier = {
+    id: "c3",
+    mainOeuvre: [{ id: "r1", ouvrageId: "od", quantite: 320, personnes: 2, duree: 56 }],
+    achats: [{ id: "a1", materiauId: "d1", quantite: 320, montant: 4400 }],
+  };
+  const bilan = C.bilanChantier(chantier, [OUVRAGE_DECIMALES], MATERIAUX_DECIMALES, SETTINGS_DECIMALES);
+  assert.deepEqual(bilan.materiauxSansAchat, []);
+  assert.equal(bilan.matieresIncompletes, false);
+});
+
 test("un ouvrage supprime n'empeche pas le bilan du chantier", () => {
   const chantier = { id: "c1", mainOeuvre: [{ id: "r1", ouvrageId: "disparu", quantite: 10, personnes: 1, duree: 4 }], achats: [] };
   const bilan = C.bilanChantier(chantier, OUVRAGES, MATERIAUX, SETTINGS);

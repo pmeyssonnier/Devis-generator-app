@@ -11,7 +11,7 @@
   const CATALOG_VERSION = 1;
   // Tenir a jour avec le champ "version" de package.json — aucun outil de build
   // ne relie les deux, donc c'est manuel.
-  const APP_VERSION = "3.3.0";
+  const APP_VERSION = "3.3.1";
   // Cle separee de STORAGE_KEY : une preference d'affichage par appareil, pas une
   // donnee de chiffrage — "Tout reinitialiser" n'y touche pas.
   const THEME_KEY = "generateur-devis-theme";
@@ -1002,6 +1002,13 @@
     const orphelins = bilan.lignes.filter((ligne) => !ligne.ouvrage).length;
     $("#chantier-warning").textContent = [
       bilan.achatsManquants ? "Aucun achat relevé : la marge réelle ne tient pas compte des matières." : "",
+      // Achats partiels : la marge réelle paraît meilleure qu'elle n'est, et rien ne
+      // le disait tant que seul le cas « aucun achat du tout » était signalé.
+      !bilan.achatsManquants && bilan.matieresIncompletes
+        ? `${bilan.materiauxSansAchat.length} fourniture(s) sans achat relevé (${bilan.materiauxSansAchat
+            .map((materiau) => materiau.nom)
+            .join(", ")}) : la marge réelle est plus favorable que la réalité.`
+        : "",
       orphelins ? `${orphelins} relevé(s) rattaché(s) à un ouvrage supprimé : ils ne recalent plus rien.` : "",
     ]
       .filter(Boolean)

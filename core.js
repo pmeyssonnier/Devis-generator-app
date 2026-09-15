@@ -480,6 +480,14 @@
       const quantite = Number(releve?.quantite) || 0;
       const heures = heuresReleve(releve);
       const calc = ouvrage ? calculateOuvrage(ouvrage, settings, materiaux) : null;
+      /*
+       * Le devis, le metre rendu et le classeur reexporte multiplient tous le prix
+       * ARRONDI (priceOf, cote app). La recette d'un chantier est de l'argent
+       * facture : la calculer sur la vente brute la decalait de quelques centimes
+       * par ligne — 0,40 EUR sur 320 m2 — et faussait d'autant la marge reelle,
+       * qui est precisement ce que le bilan sert a lire.
+       */
+      const puFacture = calc ? roundMoney(calc.vente) : 0;
       const rendementPrevu = Number(ouvrage?.heures) || 0;
       const rendementReel = rendementReleve(releve);
       return {
@@ -494,7 +502,7 @@
         rendementReel,
         ecart: ecartRelatif(rendementPrevu, rendementReel),
         heuresPrevues: rendementPrevu * quantite,
-        recette: calc ? calc.vente * quantite : 0,
+        recette: puFacture * quantite,
         prevuMainOeuvre: rendementPrevu * quantite * coutHoraire,
         prevuMatieres: calc ? calc.matieres * quantite : 0,
         materiel: calc ? calc.materiel * quantite : 0,
@@ -516,6 +524,32 @@
         ecart: ecartRelatif(Number(materiau?.prix) || 0, prix),
       };
     });
+
+    /*
+     * Quelles fournitures le chantier aurait du faire acheter, et lesquelles n'ont
+     * aucun releve ? Sans cette liste, un bilan dont un seul materiau sur trois est
+     * releve affichait une marge reelle flatteuse sans rien signaler : les matieres
+     * manquantes ne sont pas comptees, donc la marge parait meilleure qu'elle n'est.
+     * On ne compare que la PRESENCE d'un achat, pas les quantites : un achat partiel
+     * reste un choix de saisie legitime (stock, reliquat d'un autre chantier).
+     */
+    const achetes = new Set(
+      (chantier?.achats || []).map((achat) => String(achat?.materiauId ?? "").trim()).filter(Boolean),
+    );
+    const attendus = new Map();
+    lignes.forEach((ligne) => {
+      if (!ligne.ouvrage) return;
+      composantsOf(ligne.ouvrage).forEach((composant) => {
+        if (composant.quantite <= 0 || achetes.has(composant.materiauId)) return;
+        if (attendus.has(composant.materiauId)) return;
+        const materiau = trouverMateriau(composant.materiauId);
+        attendus.set(composant.materiauId, {
+          materiauId: composant.materiauId,
+          nom: materiau?.nom || "Matériau supprimé",
+        });
+      });
+    });
+    const materiauxSansAchat = Array.from(attendus.values());
 
     const somme = (liste, champ) => liste.reduce((total, item) => total + item[champ], 0);
     const materiel = somme(lignes, "materiel");
@@ -546,6 +580,11 @@
       margeReelle: recette - reel.direct,
       // Sans releve d'achat, la marge reelle n'est pas comparable : il manque les matieres.
       achatsManquants: lignes.length > 0 && achats.length === 0,
+      // Fournitures prevues par les ouvrages releves dont aucun achat n'a ete saisi.
+      materiauxSansAchat,
+      // Vrai des qu'il manque une matiere, qu'il n'y ait aucun achat ou seulement
+      // une partie : c'est ce qui doit empecher de lire la marge reelle telle quelle.
+      matieresIncompletes: materiauxSansAchat.length > 0,
     };
   }
 
